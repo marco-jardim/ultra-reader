@@ -1,6 +1,18 @@
 import pino from "pino";
 
 /**
+ * Check if pino-pretty is available
+ */
+function hasPinoPretty(): boolean {
+  try {
+    require.resolve("pino-pretty");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Create a logger instance
  *
  * @param name - Logger name
@@ -11,20 +23,22 @@ export function createLogger(
   name: string = "reader",
   level: string = process.env.LOG_LEVEL || "info"
 ) {
+  const usePretty =
+    process.env.NODE_ENV !== "production" && hasPinoPretty();
+
   return pino({
     name,
     level,
-    transport:
-      process.env.NODE_ENV !== "production"
-        ? {
-            target: "pino-pretty",
-            options: {
-              colorize: true,
-              translateTime: "SYS:standard",
-              ignore: "pid,hostname",
-            },
-          }
-        : undefined,
+    transport: usePretty
+      ? {
+          target: "pino-pretty",
+          options: {
+            colorize: true,
+            translateTime: "SYS:standard",
+            ignore: "pid,hostname",
+          },
+        }
+      : undefined,
   });
 }
 
