@@ -68,11 +68,10 @@
     "p-limit": "^4.0.0",
     "pino": "^9.0.0",
     "re2": "^1.23.0",
-    "turndown": "^7.2.0"
+    "@vakra-dev/supermarkdown": "^0.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.10.6",
-    "@types/turndown": "^5.0.6",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",

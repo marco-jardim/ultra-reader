@@ -53,7 +53,7 @@ src/
 │   └── types.ts          # ChallengeDetection, ResolutionResult
 │
 ├── formatters/
-│   ├── markdown.ts       # formatToMarkdown() - uses Turndown
+│   ├── markdown.ts       # formatToMarkdown() - uses supermarkdown
 │   ├── html.ts           # formatToHTML() - full HTML document
 │   ├── json.ts           # formatToJson() - structured JSON
 │   ├── text.ts           # formatToText() - plain text
@@ -245,7 +245,7 @@ Each formatter transforms scraped pages into a specific format:
 | `formatToJson` | Pages, metadata | Structured JSON object |
 | `formatToText` | Pages, metadata | Plain text extraction |
 
-**Markdown formatter** uses [Turndown](https://github.com/mixmark-io/turndown) for HTML-to-Markdown conversion with custom rules for code blocks, tables, and links.
+**Markdown formatter** uses [supermarkdown](https://github.com/vakra-dev/supermarkdown) - a high-performance Rust-based HTML-to-Markdown converter with full GFM support.
 
 ## Data Flow
 

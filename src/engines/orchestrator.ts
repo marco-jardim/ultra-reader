@@ -232,10 +232,11 @@ export class EngineOrchestrator {
 
     // Retry on HTTP errors that might be bot detection or server issues
     // 403 Forbidden - often bot detection, try better fingerprinting
+    // 404 Not Found - might be JS-rendered SPA that needs browser
     // 429 Too Many Requests - rate limited, try different engine
     // 5xx Server errors - might be blocking, try again
     if (error instanceof HttpError) {
-      return error.statusCode === 403 || error.statusCode === 429 || error.statusCode >= 500;
+      return error.statusCode === 403 || error.statusCode === 404 || error.statusCode === 429 || error.statusCode >= 500;
     }
 
     // Don't retry on unavailable (won't help)

@@ -572,6 +572,36 @@ Reader uses [Ulixee Hero](https://ulixee.org/), a headless browser with advanced
 - **Health Monitoring** - Background health checks every 5 minutes
 - **Request Queuing** - Queues requests when pool is full (max 100)
 
+### HTML to Markdown: supermarkdown
+
+Reader uses [**supermarkdown**](https://github.com/vakra-dev/supermarkdown) for HTML to Markdown conversion - a sister project we built from scratch specifically for web scraping and LLM pipelines.
+
+**Why we built it:**
+
+When you're scraping the web, you encounter messy, malformed HTML that breaks most converters. And when you're feeding content to LLMs, you need clean output without artifacts or noise. We needed a converter that handles real-world HTML reliably while producing high-quality markdown.
+
+**What supermarkdown offers:**
+
+| Feature | Benefit |
+|---------|---------|
+| **Written in Rust** | Native performance with Node.js bindings via napi-rs |
+| **Full GFM support** | Tables, task lists, strikethrough, autolinks |
+| **LLM-optimized** | Clean output designed for AI consumption |
+| **Battle-tested** | Handles malformed HTML from real web pages |
+| **CSS selectors** | Include/exclude elements during conversion |
+
+supermarkdown is open source and available as both a Rust crate and npm package:
+
+```bash
+# npm
+npm install @vakra-dev/supermarkdown
+
+# Rust
+cargo add supermarkdown
+```
+
+Check out the [supermarkdown repository](https://github.com/vakra-dev/supermarkdown) for examples and documentation.
+
 ## Documentation
 
 | Guide                                      | Description                    |
