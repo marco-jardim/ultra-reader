@@ -675,7 +675,7 @@ Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guideli
 If you use Reader in your research or project, please cite it:
 
 ```bibtex
-@software{reader2026,
+@software{reader.dev,
   author = {Kaul, Nihal},
   title = {Reader: Open-source, production-grade web scraping engine built for LLMs},
   year = {2026},
