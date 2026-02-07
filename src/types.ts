@@ -147,6 +147,22 @@ export interface ScrapeOptions {
 
   /** Force a specific engine, skipping the cascade */
   forceEngine?: EngineName;
+
+  // ============================================================================
+  // Anti-detection options
+  // ============================================================================
+
+  /** Respect robots.txt rules (default: true). Set to false for unrestricted scraping. */
+  respectRobots?: boolean;
+
+  /** User-Agent rotation strategy: "random" | "weighted" | "round-robin" | "per-domain" (default: "weighted") */
+  uaRotation?: "random" | "weighted" | "round-robin" | "per-domain";
+
+  /** Lock UA per domain within a session (default: true) */
+  stickyUaPerDomain?: boolean;
+
+  /** Generate plausible Referer headers (default: true) */
+  spoofReferer?: boolean;
 }
 
 /**
@@ -329,7 +345,18 @@ export interface ScraperConfig {
  */
 export const DEFAULT_OPTIONS: Omit<
   Required<ScrapeOptions>,
-  "proxy" | "waitForSelector" | "connectionToCore" | "userAgent" | "headers" | "browserPool" | "pool" | "engines" | "skipEngines" | "forceEngine"
+  | "proxy"
+  | "waitForSelector"
+  | "connectionToCore"
+  | "userAgent"
+  | "headers"
+  | "browserPool"
+  | "pool"
+  | "engines"
+  | "skipEngines"
+  | "forceEngine"
+  | "uaRotation"
+  | "stickyUaPerDomain"
 > & {
   proxy?: ProxyConfig;
   waitForSelector?: string;
@@ -341,6 +368,8 @@ export const DEFAULT_OPTIONS: Omit<
   engines?: EngineName[];
   skipEngines?: EngineName[];
   forceEngine?: EngineName;
+  uaRotation?: "random" | "weighted" | "round-robin" | "per-domain";
+  stickyUaPerDomain?: boolean;
 } = {
   urls: [],
   formats: ["markdown"],
@@ -362,6 +391,9 @@ export const DEFAULT_OPTIONS: Omit<
   // Hero-specific defaults
   verbose: false,
   showChrome: false,
+  // Anti-detection defaults
+  respectRobots: true,
+  spoofReferer: true,
 };
 
 /**

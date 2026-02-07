@@ -62,7 +62,13 @@ export {
   getUrlKey,
   shouldCrawlUrl,
 } from "./utils/url-helpers";
-export { rateLimit } from "./utils/rate-limiter";
+export { rateLimit, RateLimiter, jitteredDelay } from "./utils/rate-limiter";
+
+// =============================================================================
+// User-Agent rotation exports (for advanced usage)
+// =============================================================================
+export { getRandomUserAgent, generateReferer, UserAgentRotator } from "./utils/user-agents";
+export type { UaRotationStrategy } from "./utils/user-agents";
 
 // =============================================================================
 // Browser pool exports (for advanced usage)

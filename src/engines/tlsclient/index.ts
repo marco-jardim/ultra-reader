@@ -17,6 +17,7 @@ import {
   EngineUnavailableError,
 } from "../errors.js";
 import { ENGINE_CONFIGS } from "../types.js";
+import { getRandomUserAgent, generateReferer, UserAgentRotator } from "../../utils/user-agents.js";
 
 /**
  * Challenge indicators that require JS execution
@@ -33,7 +34,8 @@ const JS_REQUIRED_PATTERNS = [
   "JavaScript is required",
   "Please enable JavaScript",
   "requires JavaScript",
-  "noscript",
+  "<noscript>Please enable JavaScript",
+  "<noscript>This site requires JavaScript",
 ];
 
 /**
@@ -90,15 +92,51 @@ export class TlsClientEngine implements Engine {
 
       logger?.debug(`[tlsclient] Fetching ${url}`);
 
+      // Resolve User-Agent: explicit userAgent > explicit header > rotated UA
+      const resolvedUa =
+        options.userAgent ?? options.headers?.["User-Agent"] ?? getRandomUserAgent(url);
+
+      // Build Sec-CH-UA client hints for consistency
+      const clientHints = UserAgentRotator.getClientHints(resolvedUa);
+
+      // Generate Referer unless disabled or explicitly set
+      const referer =
+        options.headers?.["Referer"] ??
+        (options.spoofReferer !== false ? generateReferer(url) : undefined);
+
+      const mergedHeaders: Record<string, string> = {
+        ...(options.headers || {}),
+        "User-Agent": resolvedUa,
+        ...clientHints,
+        ...(referer ? { Referer: referer } : {}),
+      };
+
+      // Fix Sec-Fetch-Site to match Referer
+      if (mergedHeaders["Referer"]) {
+        try {
+          const refOrigin = new URL(mergedHeaders["Referer"]).origin;
+          const targetOrigin = new URL(url).origin;
+          mergedHeaders["Sec-Fetch-Site"] =
+            refOrigin === targetOrigin ? "same-origin" : "cross-site";
+        } catch {
+          // Keep existing value
+        }
+      }
+
+      // If user explicitly set userAgent, ensure it wins
+      if (options.userAgent) {
+        mergedHeaders["User-Agent"] = options.userAgent;
+      }
+
       const response = await gotScraping({
         url,
         timeout: {
           request: this.config.maxTimeout,
         },
-        headers: options.headers,
+        headers: mergedHeaders,
         followRedirect: true,
-        // got-scraping handles browser fingerprinting automatically
-        // It uses header generators and proper TLS settings
+        // got-scraping handles TLS fingerprinting automatically
+        // UA and Referer are now managed by our rotation system
       });
 
       clearTimeout(timeoutId);
@@ -106,7 +144,9 @@ export class TlsClientEngine implements Engine {
       const duration = Date.now() - startTime;
       const html = response.body;
 
-      logger?.debug(`[tlsclient] Got response: ${response.statusCode} (${html.length} chars) in ${duration}ms`);
+      logger?.debug(
+        `[tlsclient] Got response: ${response.statusCode} (${html.length} chars) in ${duration}ms`
+      );
 
       // Check for HTTP errors
       if (response.statusCode >= 400) {
@@ -139,7 +179,12 @@ export class TlsClientEngine implements Engine {
         url: response.url,
         statusCode: response.statusCode,
         contentType: response.headers["content-type"] as string | undefined,
-        headers: response.headers as Record<string, string>,
+        headers: Object.fromEntries(
+          Object.entries(response.headers).map(([k, v]) => [
+            k,
+            Array.isArray(v) ? v.join(", ") : String(v ?? ""),
+          ])
+        ),
         engine: "tlsclient",
         duration,
       };

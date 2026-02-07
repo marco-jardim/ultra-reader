@@ -13,6 +13,7 @@ import {
   type ProxyMetadata,
 } from "./types";
 import { EngineOrchestrator, AllEnginesFailedError } from "./engines/index.js";
+import { configureDefaultRotator } from "./utils/user-agents.js";
 
 /**
  * Scraper class with built-in concurrency support
@@ -38,6 +39,7 @@ import { EngineOrchestrator, AllEnginesFailedError } from "./engines/index.js";
 export class Scraper {
   private options: Required<ScrapeOptions>;
   private logger = createLogger("scraper");
+  private orchestrator: EngineOrchestrator;
   private robotsCache: Map<string, RobotsRules | null> = new Map();
 
   constructor(options: ScrapeOptions) {
@@ -47,8 +49,24 @@ export class Scraper {
       ...options,
     } as Required<ScrapeOptions>;
 
+    this.orchestrator = new EngineOrchestrator({
+      engines: this.options.engines,
+      skipEngines: this.options.skipEngines,
+      forceEngine: this.options.forceEngine,
+      logger: this.logger,
+      verbose: this.options.verbose,
+    });
+
     // Pool is required for Hero engine (but may not be needed if using http/tlsclient only)
     // The orchestrator will check availability when needed
+
+    // Configure UA rotation from options
+    if (this.options.uaRotation || this.options.stickyUaPerDomain !== undefined) {
+      configureDefaultRotator({
+        strategy: this.options.uaRotation ?? "weighted",
+        stickyPerDomain: this.options.stickyUaPerDomain ?? true,
+      });
+    }
   }
 
   /**
@@ -58,6 +76,11 @@ export class Scraper {
     const origin = new URL(url).origin;
     if (!this.robotsCache.has(origin)) {
       const rules = await fetchRobotsTxt(origin);
+      // Evict if cache too large
+      if (this.robotsCache.size >= 1000) {
+        const firstKey = this.robotsCache.keys().next().value;
+        if (firstKey) this.robotsCache.delete(firstKey);
+      }
       this.robotsCache.set(origin, rules);
     }
     return this.robotsCache.get(origin) ?? null;
@@ -94,13 +117,16 @@ export class Scraper {
 
     // Apply batch timeout if specified
     if (this.options.batchTimeoutMs && this.options.batchTimeoutMs > 0) {
+      let timeoutId: ReturnType<typeof setTimeout>;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           reject(new Error(`Batch operation timed out after ${this.options.batchTimeoutMs}ms`));
         }, this.options.batchTimeoutMs);
       });
 
-      return Promise.race([batchPromise, timeoutPromise]);
+      return Promise.race([batchPromise, timeoutPromise]).finally(() => {
+        clearTimeout(timeoutId!);
+      });
     }
 
     return batchPromise;
@@ -113,7 +139,7 @@ export class Scraper {
     url: string,
     index: number
   ): Promise<{ result: WebsiteScrapeResult | null; error?: string }> {
-    const maxRetries = this.options.maxRetries || 2;
+    const maxRetries = this.options.maxRetries ?? 2;
     let lastError: string | undefined;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -145,21 +171,16 @@ export class Scraper {
   private async scrapeSingleUrl(url: string, index: number): Promise<WebsiteScrapeResult | null> {
     const startTime = Date.now();
 
-    // Check robots.txt before scraping
-    const robotsRules = await this.getRobotsRules(url);
-    if (!isUrlAllowed(url, robotsRules)) {
-      throw new Error(`URL blocked by robots.txt: ${url}`);
+    // Check robots.txt before scraping (unless disabled)
+    if (this.options.respectRobots !== false) {
+      const robotsRules = await this.getRobotsRules(url);
+      if (!isUrlAllowed(url, robotsRules)) {
+        throw new Error(`URL blocked by robots.txt: ${url}`);
+      }
     }
 
     try {
-      // Create orchestrator with configured engines
-      const orchestrator = new EngineOrchestrator({
-        engines: this.options.engines,
-        skipEngines: this.options.skipEngines,
-        forceEngine: this.options.forceEngine,
-        logger: this.logger,
-        verbose: this.options.verbose,
-      });
+      const orchestrator = this.orchestrator;
 
       // Use orchestrator to fetch HTML
       const engineResult = await orchestrator.scrape({

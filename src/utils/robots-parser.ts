@@ -2,6 +2,8 @@
  * Simple robots.txt parser for crawler compliance
  */
 
+import { getRandomUserAgent } from "./user-agents.js";
+
 export interface RobotsRules {
   disallowedPaths: string[];
   allowedPaths: string[];
@@ -99,7 +101,7 @@ function pathMatches(path: string, pattern: string): boolean {
 
   // Handle $ end anchor
   if (regexPattern.endsWith("\\$")) {
-    regexPattern = regexPattern.slice(0, -2) + "$";
+    regexPattern = "^" + regexPattern.slice(0, -2) + "$";
   } else {
     regexPattern = "^" + regexPattern;
   }
@@ -121,7 +123,7 @@ export async function fetchRobotsTxt(baseUrl: string): Promise<RobotsRules | nul
     const url = new URL("/robots.txt", baseUrl);
     const response = await fetch(url.toString(), {
       headers: {
-        "User-Agent": "ReaderEngine/1.0",
+        "User-Agent": getRandomUserAgent(),
       },
     });
 

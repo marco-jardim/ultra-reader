@@ -15,6 +15,7 @@ import {
   EngineTimeoutError,
 } from "../errors.js";
 import { ENGINE_CONFIGS } from "../types.js";
+import { getRandomUserAgent, generateReferer, UserAgentRotator } from "../../utils/user-agents.js";
 
 /**
  * Browser-like headers for fetch requests
@@ -22,7 +23,8 @@ import { ENGINE_CONFIGS } from "../types.js";
 const DEFAULT_HEADERS: Record<string, string> = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
   "Accept-Encoding": "gzip, deflate, br",
   "Cache-Control": "no-cache",
@@ -95,12 +97,46 @@ export class HttpEngine implements Engine {
 
       logger?.debug(`[http] Fetching ${url}`);
 
+      // Resolve User-Agent: explicit userAgent > explicit header > rotated UA
+      const resolvedUa =
+        options.userAgent ?? options.headers?.["User-Agent"] ?? getRandomUserAgent(url);
+
+      // Build Sec-CH-UA client hints for consistency
+      const clientHints = UserAgentRotator.getClientHints(resolvedUa);
+
+      // Generate Referer unless disabled or explicitly set
+      const referer =
+        options.headers?.["Referer"] ??
+        (options.spoofReferer !== false ? generateReferer(url) : undefined);
+
+      const mergedHeaders: Record<string, string> = {
+        ...DEFAULT_HEADERS,
+        "User-Agent": resolvedUa,
+        ...clientHints,
+        ...(referer ? { Referer: referer } : {}),
+        ...(options.headers || {}),
+      };
+
+      // Fix Sec-Fetch-Site to match Referer consistency
+      if (mergedHeaders["Referer"]) {
+        try {
+          const refOrigin = new URL(mergedHeaders["Referer"]).origin;
+          const targetOrigin = new URL(url).origin;
+          mergedHeaders["Sec-Fetch-Site"] =
+            refOrigin === targetOrigin ? "same-origin" : "cross-site";
+        } catch {
+          // Keep default "none" if URL parsing fails
+        }
+      }
+
+      // If user explicitly set userAgent, ensure it wins over headers
+      if (options.userAgent) {
+        mergedHeaders["User-Agent"] = options.userAgent;
+      }
+
       const response = await fetch(url, {
         method: "GET",
-        headers: {
-          ...DEFAULT_HEADERS,
-          ...(options.headers || {}),
-        },
+        headers: mergedHeaders,
         redirect: "follow",
         signal: controller.signal,
       });
@@ -108,14 +144,24 @@ export class HttpEngine implements Engine {
       clearTimeout(timeoutId);
 
       const duration = Date.now() - startTime;
-      const html = await response.text();
 
-      logger?.debug(`[http] Got response: ${response.status} (${html.length} chars) in ${duration}ms`);
-
-      // Check for HTTP errors
+      // Check for HTTP errors BEFORE reading body (avoid OOM on large error responses)
       if (response.status >= 400) {
+        // Read limited body for error context only
+        const errorBody = await response.text();
+        // Still check for challenges in error pages (some CF challenges return 403)
+        const challengeType = this.detectChallenge(errorBody);
+        if (challengeType) {
+          throw new ChallengeDetectedError("http", challengeType);
+        }
         throw new HttpError("http", response.status, response.statusText);
       }
+
+      const html = await response.text();
+
+      logger?.debug(
+        `[http] Got response: ${response.status} (${html.length} chars) in ${duration}ms`
+      );
 
       // Check for challenge pages
       const challengeType = this.detectChallenge(html);
@@ -172,7 +218,9 @@ export class HttpEngine implements Engine {
     const htmlLower = html.toLowerCase();
 
     // Check for Cloudflare infrastructure + challenge patterns
-    const hasCloudflare = CLOUDFLARE_INFRA_PATTERNS.some((p) => htmlLower.includes(p.toLowerCase()));
+    const hasCloudflare = CLOUDFLARE_INFRA_PATTERNS.some((p) =>
+      htmlLower.includes(p.toLowerCase())
+    );
 
     for (const pattern of CHALLENGE_PATTERNS) {
       if (htmlLower.includes(pattern.toLowerCase())) {
