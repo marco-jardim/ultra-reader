@@ -1,6 +1,7 @@
 import { parse as parseYaml } from "yaml";
 import { getRandomUserAgent } from "../utils/user-agents.js";
 import { probeWellKnownPaths } from "./well-known-paths.js";
+import { discoveryRequest } from "./http-client.js";
 
 export interface OpenApiEndpoint {
   path: string;
@@ -354,32 +355,41 @@ export function parseOpenApiSpec(spec: Record<string, unknown>): OpenApiSpec {
 
 async function fetchText(
   url: string,
-  options?: { timeoutMs?: number; userAgent?: string }
-): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options?.timeoutMs ?? 10_000);
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent": options?.userAgent ?? getRandomUserAgent(url),
-        Accept: "application/json,application/yaml,text/yaml,text/plain,*/*",
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`OpenAPI fetch failed (${response.status})`);
-    }
-    return await response.text();
-  } finally {
-    clearTimeout(timeout);
+  options?: {
+    timeoutMs?: number;
+    userAgent?: string;
+    headers?: Record<string, string>;
+    proxyUrl?: string;
   }
+): Promise<string> {
+  const response = await discoveryRequest(url, {
+    method: "GET",
+    timeoutMs: options?.timeoutMs ?? 10_000,
+    headers: {
+      ...(options?.headers ?? {}),
+      "User-Agent":
+        options?.userAgent ?? options?.headers?.["User-Agent"] ?? getRandomUserAgent(url),
+      Accept:
+        options?.headers?.Accept ?? "application/json,application/yaml,text/yaml,text/plain,*/*",
+    },
+    proxyUrl: options?.proxyUrl,
+    responseType: "text",
+  });
+
+  if (response.statusCode < 200 || response.statusCode >= 300 || !response.bodyText) {
+    throw new Error(`OpenAPI fetch failed (${response.statusCode})`);
+  }
+  return response.bodyText;
 }
 
 export async function fetchOpenApiSpec(
   specUrl: string,
-  options?: { timeoutMs?: number; userAgent?: string }
+  options?: {
+    timeoutMs?: number;
+    userAgent?: string;
+    headers?: Record<string, string>;
+    proxyUrl?: string;
+  }
 ): Promise<OpenApiSpec> {
   const text = await fetchText(specUrl, options);
   let raw: unknown;
@@ -394,13 +404,20 @@ export async function fetchOpenApiSpec(
 
 export async function discoverOpenApi(
   baseUrl: string,
-  options?: { timeoutMs?: number; userAgent?: string }
+  options?: {
+    timeoutMs?: number;
+    userAgent?: string;
+    headers?: Record<string, string>;
+    proxyUrl?: string;
+  }
 ): Promise<OpenApiSpec | null> {
   const probes = await probeWellKnownPaths(baseUrl, {
     categories: ["openapi"],
     timeoutMs: options?.timeoutMs ?? 5_000,
     concurrency: 4,
     userAgent: options?.userAgent,
+    headers: options?.headers,
+    proxyUrl: options?.proxyUrl,
   });
   const candidates = (probes.get("openapi") ?? []).filter((p) => p.found).map((p) => p.finalUrl);
   for (const url of candidates) {

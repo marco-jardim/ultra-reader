@@ -2,6 +2,7 @@ import { gunzipSync } from "node:zlib";
 import pLimit from "p-limit";
 import { getRandomUserAgent } from "../utils/user-agents.js";
 import { probeWellKnownPaths } from "./well-known-paths.js";
+import { discoveryRequest } from "./http-client.js";
 
 export interface SitemapUrl {
   loc: string;
@@ -136,41 +137,52 @@ export function parseSitemap(content: string): SitemapParseResult {
 
 async function fetchBytes(
   url: string,
-  options: { timeoutMs: number; userAgent?: string }
+  options: {
+    timeoutMs: number;
+    userAgent?: string;
+    headers?: Record<string, string>;
+    proxyUrl?: string;
+  }
 ): Promise<{
   finalUrl: string;
   statusCode: number;
   contentType: string | null;
+  contentEncoding: string | null;
   bytes: Uint8Array;
 }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-  try {
-    const headers: Record<string, string> = {
-      "User-Agent": options.userAgent ?? getRandomUserAgent(url),
-      Accept: "*/*",
-    };
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers,
-      signal: controller.signal,
-    });
-    const buf = new Uint8Array(await response.arrayBuffer());
-    return {
-      finalUrl: response.url,
-      statusCode: response.status,
-      contentType: response.headers.get("content-type"),
-      bytes: buf,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+  const headers: Record<string, string> = {
+    ...(options.headers ?? {}),
+    "User-Agent": options.userAgent ?? options.headers?.["User-Agent"] ?? getRandomUserAgent(url),
+    Accept: options.headers?.Accept ?? "*/*",
+  };
+
+  const response = await discoveryRequest(url, {
+    method: "GET",
+    timeoutMs: options.timeoutMs,
+    headers,
+    proxyUrl: options.proxyUrl,
+    responseType: "buffer",
+  });
+
+  return {
+    finalUrl: response.url,
+    statusCode: response.statusCode,
+    contentType: response.headers["content-type"] ?? null,
+    contentEncoding: response.headers["content-encoding"] ?? null,
+    bytes: response.bodyBuffer ? new Uint8Array(response.bodyBuffer) : new Uint8Array(),
+  };
 }
 
-function maybeGunzip(url: string, contentType: string | null, bytes: Uint8Array): Uint8Array {
+function maybeGunzip(
+  url: string,
+  contentType: string | null,
+  contentEncoding: string | null,
+  bytes: Uint8Array
+): Uint8Array {
   const looksGz =
-    url.toLowerCase().endsWith(".gz") || (contentType ?? "").toLowerCase().includes("gzip");
+    url.toLowerCase().endsWith(".gz") ||
+    (contentType ?? "").toLowerCase().includes("gzip") ||
+    (contentEncoding ?? "").toLowerCase().includes("gzip");
   if (!looksGz) return bytes;
   try {
     return gunzipSync(bytes);
@@ -189,12 +201,16 @@ export async function fetchSitemap(
     excludePattern?: RegExp;
     timeoutMs?: number;
     userAgent?: string;
+    headers?: Record<string, string>;
+    proxyUrl?: string;
   }
 ): Promise<SitemapParseResult> {
   const maxDepth = options?.maxDepth ?? 3;
   const maxUrls = options?.maxUrls ?? 50_000;
   const timeoutMs = options?.timeoutMs ?? 15_000;
   const userAgent = options?.userAgent;
+  const headers = options?.headers;
+  const proxyUrl = options?.proxyUrl;
 
   const seenSitemaps = new Set<string>();
   const seenUrls = new Set<string>();
@@ -207,16 +223,18 @@ export async function fetchSitemap(
     seenSitemaps.add(url);
     if (depth > maxDepth) return;
 
-    const { finalUrl, statusCode, contentType, bytes } = await fetchBytes(url, {
+    const { finalUrl, statusCode, contentType, contentEncoding, bytes } = await fetchBytes(url, {
       timeoutMs,
       userAgent,
+      headers,
+      proxyUrl,
     });
     if (statusCode >= 400) {
       warnings.push(`Sitemap fetch failed: ${finalUrl} (${statusCode})`);
       return;
     }
 
-    const decoded = maybeGunzip(finalUrl, contentType, bytes);
+    const decoded = maybeGunzip(finalUrl, contentType, contentEncoding, bytes);
     const text = new TextDecoder("utf-8", { fatal: false }).decode(decoded);
     const parsed = parseSitemap(text);
     warnings.push(...parsed.warnings);
@@ -276,6 +294,8 @@ export async function discoverSitemaps(
     timeoutMs?: number;
     concurrency?: number;
     userAgent?: string;
+    headers?: Record<string, string>;
+    proxyUrl?: string;
   }
 ): Promise<{
   sources: Array<{ url: string; foundVia: "robots.txt" | "well-known" | "sitemap-index" }>;
@@ -285,6 +305,8 @@ export async function discoverSitemaps(
   const origin = normalizeOrigin(baseUrl);
   const timeoutMs = options?.timeoutMs ?? 10_000;
   const userAgent = options?.userAgent;
+  const headers = options?.headers;
+  const proxyUrl = options?.proxyUrl;
   const concurrency = options?.concurrency ?? 3;
   const limit = pLimit(concurrency);
 
@@ -295,29 +317,25 @@ export async function discoverSitemaps(
   // 1) robots.txt Sitemap: directives
   try {
     const robotsUrl = new URL("/robots.txt", origin).toString();
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(robotsUrl, {
-        method: "GET",
-        redirect: "follow",
-        headers: {
-          "User-Agent": userAgent ?? getRandomUserAgent(robotsUrl),
-          Accept: "text/plain,*/*",
-        },
-        signal: controller.signal,
-      });
-      if (response.ok) {
-        const txt = await response.text();
-        for (const url of extractSitemapsFromRobots(txt)) {
-          if (!sitemapUrls.has(url)) {
-            sitemapUrls.add(url);
-            sources.push({ url, foundVia: "robots.txt" });
-          }
+    const response = await discoveryRequest(robotsUrl, {
+      method: "GET",
+      timeoutMs,
+      headers: {
+        ...(headers ?? {}),
+        "User-Agent": userAgent ?? headers?.["User-Agent"] ?? getRandomUserAgent(robotsUrl),
+        Accept: headers?.Accept ?? "text/plain,*/*",
+      },
+      proxyUrl,
+      responseType: "text",
+    });
+    if (response.statusCode >= 200 && response.statusCode < 300 && response.bodyText) {
+      const txt = response.bodyText;
+      for (const url of extractSitemapsFromRobots(txt)) {
+        if (!sitemapUrls.has(url)) {
+          sitemapUrls.add(url);
+          sources.push({ url, foundVia: "robots.txt" });
         }
       }
-    } finally {
-      clearTimeout(t);
     }
   } catch {
     // ignore
@@ -329,6 +347,8 @@ export async function discoverSitemaps(
     timeoutMs,
     concurrency,
     userAgent,
+    headers,
+    proxyUrl,
   });
   const sitemapProbes = probes.get("sitemap") ?? [];
   for (const p of sitemapProbes) {
@@ -353,6 +373,8 @@ export async function discoverSitemaps(
           sinceDate: options?.sinceDate,
           timeoutMs,
           userAgent,
+          headers,
+          proxyUrl,
         });
         for (const u of parsed.urls) {
           if (!seenLoc.has(u.loc)) {

@@ -1,4 +1,5 @@
 import { getRandomUserAgent } from "../utils/user-agents.js";
+import { discoveryRequest } from "./http-client.js";
 
 export interface GraphQLField {
   name: string;
@@ -199,20 +200,34 @@ function parseType(type: unknown): GraphQLType | null {
   };
 }
 
-async function fetchJson(
+async function requestJson(
   url: string,
-  init: RequestInit,
-  timeoutMs: number
-): Promise<{ status: number; json: unknown }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...init, redirect: "follow", signal: controller.signal });
-    const json = await res.json().catch(() => null);
-    return { status: res.status, json };
-  } finally {
-    clearTimeout(timeout);
+  options: {
+    method: "GET" | "POST";
+    headers: Record<string, string>;
+    timeoutMs: number;
+    proxyUrl?: string;
+    json?: unknown;
   }
+): Promise<{ status: number; json: unknown }> {
+  const res = await discoveryRequest(url, {
+    method: options.method,
+    timeoutMs: options.timeoutMs,
+    headers: options.headers,
+    proxyUrl: options.proxyUrl,
+    responseType: "text",
+    json: options.json,
+  });
+
+  let parsed: unknown = null;
+  if (res.bodyText) {
+    try {
+      parsed = JSON.parse(res.bodyText);
+    } catch {
+      parsed = null;
+    }
+  }
+  return { status: res.statusCode, json: parsed };
 }
 
 function looksLikeIntrospectionDisabled(payload: unknown): boolean {
@@ -235,28 +250,26 @@ export async function introspectGraphQL(
     headers?: Record<string, string>;
     timeoutMs?: number;
     userAgent?: string;
+    proxyUrl?: string;
   }
 ): Promise<GraphQLSchema | null> {
   const timeoutMs = options?.timeoutMs ?? 10_000;
   const headers: Record<string, string> = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-    "User-Agent": options?.userAgent ?? getRandomUserAgent(endpoint),
     ...options?.headers,
+    Accept: options?.headers?.Accept ?? "application/json",
+    "Content-Type": options?.headers?.["Content-Type"] ?? "application/json",
+    "User-Agent":
+      options?.userAgent ?? options?.headers?.["User-Agent"] ?? getRandomUserAgent(endpoint),
   };
 
-  const body = JSON.stringify({ query: INTROSPECTION_QUERY });
-
   // 1) POST
-  const post = await fetchJson(
-    endpoint,
-    {
-      method: "POST",
-      headers,
-      body,
-    },
-    timeoutMs
-  );
+  const post = await requestJson(endpoint, {
+    method: "POST",
+    headers,
+    timeoutMs,
+    proxyUrl: options?.proxyUrl,
+    json: { query: INTROSPECTION_QUERY },
+  });
 
   if (post.status === 403 || post.status === 400) {
     // fallback to GET (some endpoints only allow GET)
@@ -275,18 +288,17 @@ export async function introspectGraphQL(
   // 2) GET fallback
   const url = new URL(endpoint);
   url.searchParams.set("query", INTROSPECTION_QUERY);
-  const get = await fetchJson(
-    url.toString(),
-    {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": options?.userAgent ?? getRandomUserAgent(endpoint),
-        ...options?.headers,
-      },
+  const get = await requestJson(url.toString(), {
+    method: "GET",
+    timeoutMs,
+    proxyUrl: options?.proxyUrl,
+    headers: {
+      ...options?.headers,
+      Accept: options?.headers?.Accept ?? "application/json",
+      "User-Agent":
+        options?.userAgent ?? options?.headers?.["User-Agent"] ?? getRandomUserAgent(endpoint),
     },
-    timeoutMs
-  );
+  });
 
   if (
     get.status >= 200 &&

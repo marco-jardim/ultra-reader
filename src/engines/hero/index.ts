@@ -57,6 +57,10 @@ export class HeroEngine implements Engine {
           : null;
 
         try {
+          if (interceptor) {
+            await interceptor.ready;
+          }
+
           // Set up abort handling
           let aborted = false;
           if (abortSignal) {

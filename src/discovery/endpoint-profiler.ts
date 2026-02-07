@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { getRandomUserAgent } from "../utils/user-agents.js";
+import { discoveryRequest, type DiscoveryHttpMethod } from "./http-client.js";
 
 export interface EndpointProfile {
   url: string;
@@ -52,12 +53,12 @@ function calcLatencyMs(start: number, end: number): number {
   return Math.max(0, end - start);
 }
 
-function detectAuth(headers: Headers): {
+function detectAuth(headers: Record<string, string>): {
   required: boolean;
   type?: EndpointProfile["auth"]["type"];
   mechanism?: string;
 } {
-  const wwwAuth = headers.get("www-authenticate");
+  const wwwAuth = headers["www-authenticate"];
   if (wwwAuth) {
     const v = wwwAuth.toLowerCase();
     if (v.includes("bearer"))
@@ -78,12 +79,14 @@ function classifyStatus(statusCode: number): EndpointProfile["status"] {
   return "error";
 }
 
-function parseRateLimit(headers: Headers): EndpointProfile["rateLimits"] | undefined {
+function parseRateLimit(
+  headers: Record<string, string>
+): EndpointProfile["rateLimits"] | undefined {
   const headerNames: string[] = [];
-  const limit = toNumber(headers.get("x-ratelimit-limit"));
-  const remaining = toNumber(headers.get("x-ratelimit-remaining"));
-  const reset = toNumber(headers.get("x-ratelimit-reset"));
-  const retryAfter = toNumber(headers.get("retry-after"));
+  const limit = toNumber(headers["x-ratelimit-limit"] ?? null);
+  const remaining = toNumber(headers["x-ratelimit-remaining"] ?? null);
+  const reset = toNumber(headers["x-ratelimit-reset"] ?? null);
+  const retryAfter = toNumber(headers["retry-after"] ?? null);
   if (limit != null) headerNames.push("x-ratelimit-limit");
   if (remaining != null) headerNames.push("x-ratelimit-remaining");
   if (reset != null) headerNames.push("x-ratelimit-reset");
@@ -99,9 +102,9 @@ function parseRateLimit(headers: Headers): EndpointProfile["rateLimits"] | undef
   };
 }
 
-function parseCors(headers: Headers): EndpointProfile["cors"] {
-  const allowOrigin = headers.get("access-control-allow-origin") ?? undefined;
-  const allowMethodsRaw = headers.get("access-control-allow-methods");
+function parseCors(headers: Record<string, string>): EndpointProfile["cors"] {
+  const allowOrigin = headers["access-control-allow-origin"] ?? undefined;
+  const allowMethodsRaw = headers["access-control-allow-methods"];
   const allowMethods = allowMethodsRaw
     ? allowMethodsRaw
         .split(",")
@@ -115,10 +118,10 @@ function parseCors(headers: Headers): EndpointProfile["cors"] {
   };
 }
 
-function parseCaching(headers: Headers): EndpointProfile["caching"] {
-  const cacheControl = headers.get("cache-control") ?? undefined;
-  const etag = headers.get("etag") ?? undefined;
-  const lastModified = headers.get("last-modified") ?? undefined;
+function parseCaching(headers: Record<string, string>): EndpointProfile["caching"] {
+  const cacheControl = headers["cache-control"] ?? undefined;
+  const etag = headers["etag"] ?? undefined;
+  const lastModified = headers["last-modified"] ?? undefined;
   let maxAge: number | undefined;
   if (cacheControl) {
     const m = cacheControl.match(/max-age=(\d+)/i);
@@ -130,6 +133,12 @@ function parseCaching(headers: Headers): EndpointProfile["caching"] {
     lastModified,
     maxAge: Number.isFinite(maxAge ?? Number.NaN) ? maxAge : undefined,
   };
+}
+
+function normalizeMethod(method: string): DiscoveryHttpMethod {
+  const upper = method.toUpperCase();
+  if (upper === "GET" || upper === "HEAD" || upper === "POST") return upper;
+  return "GET";
 }
 
 export function calculateScrapabilityScore(profile: EndpointProfile): number {
@@ -168,65 +177,67 @@ export async function profileEndpoint(
     timeoutMs?: number;
     userAgent?: string;
     testPagination?: boolean;
+    proxyUrl?: string;
   }
 ): Promise<EndpointProfile> {
   const method = options?.method ?? "GET";
   const timeoutMs = options?.timeoutMs ?? 10_000;
   const headers: Record<string, string> = {
-    Accept: "application/json,text/plain,*/*",
-    "User-Agent": options?.userAgent ?? getRandomUserAgent(url),
     ...options?.headers,
+    Accept: options?.headers?.Accept ?? "application/json,text/plain,*/*",
+    "User-Agent": options?.userAgent ?? options?.headers?.["User-Agent"] ?? getRandomUserAgent(url),
   };
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const start = Date.now();
+
+  // 1) HEAD probe (best effort)
   try {
-    // 1) HEAD probe (best effort)
-    try {
-      await fetch(url, { method: "HEAD", redirect: "follow", headers, signal: controller.signal });
-    } catch {
-      // ignore
-    }
-
-    // 2) GET/whatever
-    const res = await fetch(url, {
-      method,
-      redirect: "follow",
+    await discoveryRequest(url, {
+      method: "HEAD",
+      timeoutMs,
       headers,
-      signal: controller.signal,
+      proxyUrl: options?.proxyUrl,
     });
-    const end = Date.now();
-    const statusCode = res.status;
-    const status = classifyStatus(statusCode);
-    const contentType = res.headers.get("content-type") ?? "";
-    const body = await res.arrayBuffer().catch(() => new ArrayBuffer(0));
-    const responseSize = body.byteLength;
-
-    const authFromHeaders = detectAuth(res.headers);
-    const rateLimits = parseRateLimit(res.headers);
-    const cors = parseCors(res.headers);
-    const caching = parseCaching(res.headers);
-
-    const profile: EndpointProfile = {
-      url,
-      method,
-      status,
-      statusCode,
-      contentType,
-      responseSize,
-      latency: calcLatencyMs(start, end),
-      rateLimits,
-      auth: authFromHeaders,
-      cors,
-      caching,
-      scrapabilityScore: 0,
-    };
-    profile.scrapabilityScore = calculateScrapabilityScore(profile);
-    return profile;
-  } finally {
-    clearTimeout(timeout);
+  } catch {
+    // ignore
   }
+
+  // 2) GET/POST
+  const res = await discoveryRequest(url, {
+    method: normalizeMethod(method),
+    timeoutMs,
+    headers,
+    proxyUrl: options?.proxyUrl,
+    responseType: "buffer",
+  });
+  const end = Date.now();
+
+  const statusCode = res.statusCode;
+  const status = classifyStatus(statusCode);
+  const contentType = res.headers["content-type"] ?? "";
+  const responseSize = res.bodyBuffer?.length ?? 0;
+
+  const authFromHeaders = detectAuth(res.headers);
+  const rateLimits = parseRateLimit(res.headers);
+  const cors = parseCors(res.headers);
+  const caching = parseCaching(res.headers);
+
+  const profile: EndpointProfile = {
+    url,
+    method,
+    status,
+    statusCode,
+    contentType,
+    responseSize,
+    latency: calcLatencyMs(start, end),
+    rateLimits,
+    auth: authFromHeaders,
+    cors,
+    caching,
+    scrapabilityScore: 0,
+  };
+  profile.scrapabilityScore = calculateScrapabilityScore(profile);
+  return profile;
 }
 
 export async function profileEndpoints(
@@ -237,6 +248,7 @@ export async function profileEndpoints(
     timeoutMs?: number;
     userAgent?: string;
     testPagination?: boolean;
+    proxyUrl?: string;
     onProgress?: (completed: number, total: number) => void;
   }
 ): Promise<EndpointProfile[]> {
@@ -254,6 +266,7 @@ export async function profileEndpoints(
           timeoutMs: options?.timeoutMs,
           userAgent: options?.userAgent,
           testPagination: options?.testPagination,
+          proxyUrl: options?.proxyUrl,
         });
         completed++;
         options?.onProgress?.(completed, total);

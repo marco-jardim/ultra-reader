@@ -93,6 +93,15 @@ export interface DiscoveryOptions {
   timeoutMs?: number;
   cacheDir?: string;
   cacheTtlMs?: number;
+  /** Network controls for Phase 1.5 discovery requests */
+  network?: {
+    /** Proxy URL to route discovery traffic through (http(s)://user:pass@host:port) */
+    proxyUrl?: string;
+    /** Extra headers to send on discovery probes */
+    headers?: Record<string, string>;
+    /** Fixed user agent for discovery (otherwise per-request rotation may apply) */
+    userAgent?: string;
+  };
   onProgress?: (stage: string, detail: string) => void;
 }
 
@@ -159,6 +168,7 @@ export function finalizeProfile(
     generatedAt,
   };
   const { generatedAt: _ga, ...hashBase } = base;
+  void _ga;
   const contentHash = hashProfile(hashBase);
   const withDerived: Omit<SiteProfile, "summary"> = {
     ...base,
@@ -231,6 +241,7 @@ export async function discoverSite(url: string, options?: DiscoveryOptions): Pro
   const origin = originOf(url);
   const timeoutMs = options?.timeoutMs ?? 60_000;
   const maxSitemapUrls = options?.maxSitemapUrls ?? 1000;
+  const network = options?.network;
 
   options?.onProgress?.("start", domain);
 
@@ -272,6 +283,9 @@ export async function discoverSite(url: string, options?: DiscoveryOptions): Pro
       categories: pickCategories(),
       timeoutMs: Math.min(8_000, timeoutMs),
       concurrency: 4,
+      userAgent: network?.userAgent,
+      headers: network?.headers,
+      proxyUrl: network?.proxyUrl,
     });
     probes = result;
     for (const [category, items] of result.entries()) {
@@ -298,6 +312,9 @@ export async function discoverSite(url: string, options?: DiscoveryOptions): Pro
       const sitemap = await discoverSitemaps(origin, {
         timeoutMs: Math.min(15_000, timeoutMs),
         maxUrls: Math.max(maxSitemapUrls, 1),
+        userAgent: network?.userAgent,
+        headers: network?.headers,
+        proxyUrl: network?.proxyUrl,
       });
       base.sitemap.found = sitemap.totalUrls > 0;
       base.sitemap.sources = sitemap.sources;
@@ -328,7 +345,12 @@ export async function discoverSite(url: string, options?: DiscoveryOptions): Pro
     const unique = [...new Set(openapiCandidates)];
     for (const candidate of unique) {
       try {
-        const spec = await fetchOpenApiSpec(candidate, { timeoutMs: Math.min(15_000, timeoutMs) });
+        const spec = await fetchOpenApiSpec(candidate, {
+          timeoutMs: Math.min(15_000, timeoutMs),
+          userAgent: network?.userAgent,
+          headers: network?.headers,
+          proxyUrl: network?.proxyUrl,
+        });
         base.openapi.found = true;
         base.openapi.specUrl = candidate;
         base.openapi.spec = spec;
@@ -348,6 +370,9 @@ export async function discoverSite(url: string, options?: DiscoveryOptions): Pro
           await import("./openapi-prober.js")
         ).discoverOpenApi(origin, {
           timeoutMs: Math.min(15_000, timeoutMs),
+          userAgent: network?.userAgent,
+          headers: network?.headers,
+          proxyUrl: network?.proxyUrl,
         });
         if (spec) {
           base.openapi.found = true;
@@ -374,6 +399,9 @@ export async function discoverSite(url: string, options?: DiscoveryOptions): Pro
       try {
         const schema = await introspectGraphQL(endpoint, {
           timeoutMs: Math.min(12_000, timeoutMs),
+          userAgent: network?.userAgent,
+          headers: network?.headers,
+          proxyUrl: network?.proxyUrl,
         });
         if (!schema) continue;
         base.graphql.found = true;
@@ -418,6 +446,9 @@ export async function discoverSite(url: string, options?: DiscoveryOptions): Pro
       const profs = await profileEndpoints(endpointsToProfile, {
         concurrency: 3,
         timeoutMs: Math.min(10_000, timeoutMs),
+        userAgent: network?.userAgent,
+        headers: network?.headers,
+        proxyUrl: network?.proxyUrl,
       });
       // normalize scores (defensive)
       for (const p of profs) p.scrapabilityScore = calculateScrapabilityScore(p);

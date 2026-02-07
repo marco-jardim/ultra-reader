@@ -46,6 +46,8 @@ export interface InterceptorOptions {
 }
 
 export interface ApiInterceptorHandle {
+  /** Resolves when listeners are attached (best effort) */
+  ready: Promise<void>;
   getCapturedRequests(): InterceptedRequest[];
   getApiPatterns(): ApiPattern[];
   stop(): void;
@@ -284,85 +286,90 @@ export function setupApiInterceptor(
   let listener: ((resource: Resource | WebsocketResource) => void) | null = null;
   let tabRef: Tab | null = null;
 
-  void (async () => {
-    tabRef = await getTab(hero);
-    listener = (resource) => {
-      void (async () => {
-        if (stopped) return;
-        if (captured.length >= maxCaptured) return;
+  const ready = (async (): Promise<void> => {
+    try {
+      tabRef = await getTab(hero);
+      listener = (resource) => {
+        void (async () => {
+          if (stopped) return;
+          if (captured.length >= maxCaptured) return;
 
-        const url = resource.url;
-        let parsed: URL;
-        try {
-          parsed = new URL(url);
-        } catch {
-          return;
-        }
-        if (shouldIgnoreDomain(parsed.hostname, ignoreDomains)) return;
-
-        const response = resource.response;
-        const statusCode = response?.statusCode ?? 0;
-        const resHeaders = toHeaderRecord(response?.headers);
-        const contentType = resHeaders["content-type"] ?? "";
-        if (!options?.captureAssets && !isDesiredContentType(contentType, captureContentTypes))
-          return;
-
-        const request = resource.request;
-        const reqHeaders = toHeaderRecord(request?.headers);
-        const method = request?.method ?? "GET";
-
-        let requestBody: unknown;
-        try {
-          const postData = request ? await request.postData : null;
-          const reqCt = reqHeaders["content-type"] ?? "";
-          if (
-            postData &&
-            postData.length &&
-            reqCt.toLowerCase().includes("json") &&
-            postData.length <= 64 * 1024
-          ) {
-            requestBody = JSON.parse(postData.toString("utf-8"));
+          const url = resource.url;
+          let parsed: URL;
+          try {
+            parsed = new URL(url);
+          } catch {
+            return;
           }
-        } catch {
-          // ignore
-        }
+          if (shouldIgnoreDomain(parsed.hostname, ignoreDomains)) return;
 
-        let responseBody: unknown;
-        let responseSize = 0;
-        try {
-          const buf = await resource.buffer;
-          responseSize = buf?.length ?? 0;
-          if (
-            responseSize <= maxResponseSize &&
-            isDesiredContentType(contentType, captureContentTypes)
-          ) {
-            responseBody = await resource.json;
+          const response = resource.response;
+          const statusCode = response?.statusCode ?? 0;
+          const resHeaders = toHeaderRecord(response?.headers);
+          const contentType = resHeaders["content-type"] ?? "";
+          if (!options?.captureAssets && !isDesiredContentType(contentType, captureContentTypes))
+            return;
+
+          const request = resource.request;
+          const reqHeaders = toHeaderRecord(request?.headers);
+          const method = request?.method ?? "GET";
+
+          let requestBody: unknown;
+          try {
+            const postData = request ? await request.postData : null;
+            const reqCt = reqHeaders["content-type"] ?? "";
+            if (
+              postData &&
+              postData.length &&
+              reqCt.toLowerCase().includes("json") &&
+              postData.length <= 64 * 1024
+            ) {
+              requestBody = JSON.parse(postData.toString("utf-8"));
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
-        }
 
-        const timestamp = (request?.timestamp ?? new Date()).toISOString();
-        captured.push({
-          url,
-          method,
-          headers: reqHeaders,
-          requestBody,
-          statusCode,
-          contentType,
-          responseBody,
-          responseSize,
-          timing: 0,
-          timestamp,
-          resourceType: String((resource as unknown as { type?: unknown }).type ?? ""),
-        });
-      })();
-    };
+          let responseBody: unknown;
+          let responseSize = 0;
+          try {
+            const buf = await resource.buffer;
+            responseSize = buf?.length ?? 0;
+            if (
+              responseSize <= maxResponseSize &&
+              isDesiredContentType(contentType, captureContentTypes)
+            ) {
+              responseBody = await resource.json;
+            }
+          } catch {
+            // ignore
+          }
 
-    await tabRef.addEventListener("resource", listener);
+          const timestamp = (request?.timestamp ?? new Date()).toISOString();
+          captured.push({
+            url,
+            method,
+            headers: reqHeaders,
+            requestBody,
+            statusCode,
+            contentType,
+            responseBody,
+            responseSize,
+            timing: 0,
+            timestamp,
+            resourceType: String((resource as unknown as { type?: unknown }).type ?? ""),
+          });
+        })();
+      };
+
+      await tabRef.addEventListener("resource", listener);
+    } catch {
+      // ignore
+    }
   })();
 
   return {
+    ready,
     getCapturedRequests() {
       return [...captured];
     },

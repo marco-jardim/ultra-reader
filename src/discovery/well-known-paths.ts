@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { getRandomUserAgent, generateReferer } from "../utils/user-agents.js";
+import { discoveryRequest } from "./http-client.js";
 
 export interface WellKnownProbeResult {
   path: string;
@@ -90,12 +91,25 @@ function parseContentLength(value: string | null): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function isLikelyExistsStatus(statusCode: number): boolean {
+  // Many endpoints exist but respond with auth/method blocks.
+  return (
+    (statusCode >= 200 && statusCode < 300) ||
+    statusCode === 401 ||
+    statusCode === 403 ||
+    statusCode === 405 ||
+    statusCode === 429
+  );
+}
+
 async function headProbe(
   url: string,
   options: {
     timeoutMs: number;
     userAgent?: string;
     referer?: string;
+    headers?: Record<string, string>;
+    proxyUrl?: string;
   }
 ): Promise<{
   statusCode: number;
@@ -103,31 +117,48 @@ async function headProbe(
   contentLength: number;
   finalUrl: string;
 }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-  try {
-    const headers: Record<string, string> = {
-      "User-Agent": options.userAgent ?? getRandomUserAgent(url),
-      Accept: "*/*",
-    };
-    if (options.referer) headers.Referer = options.referer;
+  const baseHeaders: Record<string, string> = {
+    ...(options.headers ?? {}),
+    "User-Agent": options.userAgent ?? options.headers?.["User-Agent"] ?? getRandomUserAgent(url),
+    Accept: options.headers?.Accept ?? "*/*",
+  };
+  if (options.referer) baseHeaders.Referer = baseHeaders.Referer ?? options.referer;
 
-    const response = await fetch(url, {
-      method: "HEAD",
-      redirect: "follow",
-      headers,
-      signal: controller.signal,
+  // Use HEAD by default, but fall back to GET on method blocks.
+  const head = await discoveryRequest(url, {
+    method: "HEAD",
+    timeoutMs: options.timeoutMs,
+    headers: baseHeaders,
+    proxyUrl: options.proxyUrl,
+  });
+
+  if (head.statusCode === 405 || head.statusCode === 400 || head.statusCode === 0) {
+    const get = await discoveryRequest(url, {
+      method: "GET",
+      timeoutMs: options.timeoutMs,
+      headers: {
+        ...baseHeaders,
+        Range: baseHeaders.Range ?? "bytes=0-2047",
+      },
+      proxyUrl: options.proxyUrl,
+      responseType: "buffer",
     });
 
+    const lenFromHeader = parseContentLength(get.headers["content-length"] ?? null);
     return {
-      statusCode: response.status,
-      contentType: response.headers.get("content-type"),
-      contentLength: parseContentLength(response.headers.get("content-length")),
-      finalUrl: response.url,
+      statusCode: get.statusCode,
+      contentType: get.headers["content-type"] ?? null,
+      contentLength: lenFromHeader || get.bodyBuffer?.length || 0,
+      finalUrl: get.url,
     };
-  } finally {
-    clearTimeout(timeout);
   }
+
+  return {
+    statusCode: head.statusCode,
+    contentType: head.headers["content-type"] ?? null,
+    contentLength: parseContentLength(head.headers["content-length"] ?? null),
+    finalUrl: head.url,
+  };
 }
 
 /**
@@ -141,6 +172,8 @@ export async function probeWellKnownPaths(
     timeoutMs?: number;
     concurrency?: number;
     userAgent?: string;
+    headers?: Record<string, string>;
+    proxyUrl?: string;
   }
 ): Promise<Map<ProbeCategory, WellKnownProbeResult[]>> {
   const origin = normalizeBaseUrl(baseUrl);
@@ -149,6 +182,8 @@ export async function probeWellKnownPaths(
   const timeoutMs = options?.timeoutMs ?? 5_000;
   const concurrency = options?.concurrency ?? 4;
   const userAgent = options?.userAgent;
+  const headers = options?.headers;
+  const proxyUrl = options?.proxyUrl;
   const referer = generateReferer(origin) ?? origin + "/";
 
   const limit = pLimit(concurrency);
@@ -162,10 +197,16 @@ export async function probeWellKnownPaths(
           limit(async (): Promise<WellKnownProbeResult> => {
             const fullUrl = joinUrl(origin, path);
             try {
-              const res = await headProbe(fullUrl, { timeoutMs, userAgent, referer });
+              const res = await headProbe(fullUrl, {
+                timeoutMs,
+                userAgent,
+                referer,
+                headers,
+                proxyUrl,
+              });
               return {
                 path,
-                found: res.statusCode >= 200 && res.statusCode < 300,
+                found: isLikelyExistsStatus(res.statusCode),
                 statusCode: res.statusCode,
                 contentType: res.contentType,
                 contentLength: res.contentLength,

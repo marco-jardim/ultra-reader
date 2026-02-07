@@ -128,7 +128,31 @@ export class Scraper {
       }
 
       try {
-        const profile = await discoverSite(url, this.options.discoveryOptions);
+        const proxy = this.options.proxy;
+        const proxyUrl =
+          this.options.discoveryOptions?.network?.proxyUrl ??
+          proxy?.url ??
+          (proxy?.host && proxy?.port
+            ? `http://${
+                proxy.username
+                  ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(
+                      proxy.password ?? ""
+                    )}@`
+                  : ""
+              }${proxy.host}:${proxy.port}`
+            : undefined);
+
+        const discoveryOptions = {
+          ...this.options.discoveryOptions,
+          network: {
+            ...this.options.discoveryOptions?.network,
+            proxyUrl,
+            headers: this.options.discoveryOptions?.network?.headers ?? this.options.headers,
+            userAgent: this.options.discoveryOptions?.network?.userAgent ?? this.options.userAgent,
+          },
+        };
+
+        const profile = await discoverSite(url, discoveryOptions);
         try {
           await saveCachedProfile(profile, cacheDir);
         } catch {
@@ -272,16 +296,90 @@ export class Scraper {
         const discovered = engineResult.artifacts?.discoveredApis;
         if (discovered && discovered.totalRequests > 0 && discovered.patterns.length > 0) {
           const domain = new URL(url).hostname;
-          const existing = siteProfile.discoveredApis.totalRequests;
-          if (discovered.totalRequests >= existing) {
-            const { summary: _summary, contentHash: _contentHash, ...base } = siteProfile;
-            siteProfile = finalizeProfile({
-              ...base,
-              generatedAt: new Date().toISOString(),
-              discoveredApis: discovered as SiteProfile["discoveredApis"],
-            });
+          const incoming = discovered as SiteProfile["discoveredApis"];
 
-            // Update in-memory cache and persist.
+          const mergedPatterns = (() => {
+            const byKey = new Map<string, SiteProfile["discoveredApis"]["patterns"][number]>();
+            for (const p of siteProfile!.discoveredApis.patterns) {
+              const key = `${p.method.toUpperCase()} ${p.urlTemplate}`;
+              byKey.set(key, p);
+            }
+
+            for (const p of incoming.patterns) {
+              const key = `${p.method.toUpperCase()} ${p.urlTemplate}`;
+              const existing = byKey.get(key);
+              if (!existing) {
+                byKey.set(key, p);
+                continue;
+              }
+
+              const mergedExamples = (() => {
+                const out = [...existing.examples];
+                const seen = new Set(out.map((e) => `${e.method} ${e.url} ${e.statusCode}`));
+                for (const e of p.examples) {
+                  const k = `${e.method} ${e.url} ${e.statusCode}`;
+                  if (seen.has(k)) continue;
+                  out.push(e);
+                  seen.add(k);
+                  if (out.length >= 5) break;
+                }
+                return out;
+              })();
+
+              const mergedQueryParams = (() => {
+                const outByName = new Map<string, (typeof existing.queryParams)[number]>();
+                for (const qp of existing.queryParams) outByName.set(qp.name, qp);
+                for (const qp of p.queryParams) {
+                  const prev = outByName.get(qp.name);
+                  if (!prev) {
+                    outByName.set(qp.name, qp);
+                    continue;
+                  }
+                  const values = [
+                    ...new Set([...(prev.exampleValues ?? []), ...(qp.exampleValues ?? [])]),
+                  ].slice(0, 5);
+                  outByName.set(qp.name, {
+                    ...prev,
+                    exampleValues: values,
+                    likelyRequired: prev.likelyRequired || qp.likelyRequired,
+                  });
+                }
+                return [...outByName.values()];
+              })();
+
+              byKey.set(key, {
+                ...existing,
+                basePath: existing.basePath || p.basePath,
+                examples: mergedExamples,
+                commonHeaders: { ...p.commonHeaders, ...existing.commonHeaders },
+                queryParams: mergedQueryParams,
+                responseSchema: existing.responseSchema ?? p.responseSchema,
+                requiresAuth: existing.requiresAuth || p.requiresAuth,
+                authMechanism: existing.authMechanism ?? p.authMechanism,
+              });
+            }
+
+            return [...byKey.values()];
+          })();
+
+          const mergedDiscoveredApis: SiteProfile["discoveredApis"] = {
+            patterns: mergedPatterns,
+            totalRequests: siteProfile.discoveredApis.totalRequests + incoming.totalRequests,
+            uniqueEndpoints: mergedPatterns.length,
+          };
+
+          const previousHash = siteProfile.contentHash;
+          const { summary: _summary, contentHash: _contentHash, ...base } = siteProfile;
+          void _summary;
+          void _contentHash;
+          const updated = finalizeProfile({
+            ...base,
+            generatedAt: new Date().toISOString(),
+            discoveredApis: mergedDiscoveredApis,
+          });
+
+          if (updated.contentHash !== previousHash) {
+            siteProfile = updated;
             this.siteProfileCache.set(domain, siteProfile);
             try {
               await saveCachedProfile(siteProfile, this.options.discoveryOptions?.cacheDir);
