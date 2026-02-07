@@ -1968,70 +1968,410 @@ export function getRandomAcceptLanguage(locale: string = "en-US"): string {
 ### 2.1 Integração com CAPTCHA Solving Services
 
 **Gravidade:** 🔴 CRÍTICO  
-**Esforço:** ~2-3 dias  
-**Impacto:** Desbloqueia sites com reCAPTCHA, hCaptcha, Turnstile interativo
+**Esforço:** ~3-4 dias  
+**Impacto:** Desbloqueia sites com reCAPTCHA, hCaptcha, Turnstile interativo, Arkose/FunCaptcha, GeeTest, DataDome, Akamai BMP, Amazon WAF
 
-**Arquivos a criar:**
+#### 2.1.1 Provider Research & Comparison
 
-- `src/captcha/solver.ts` — Interface abstrata de solver
-- `src/captcha/two-captcha.ts` — Implementação 2Captcha API
-- `src/captcha/anti-captcha.ts` — Implementação Anti-Captcha API
-- `src/captcha/capsolver.ts` — Implementação CapSolver API
-- `src/captcha/types.ts` — Tipos de CAPTCHA e configuração
+Três provedores avaliados (fev/2026) para uso low-volume e budget-friendly:
+
+| Critério                 | CapSolver                   | 2Captcha                         | Anti-Captcha                    |
+| ------------------------ | --------------------------- | -------------------------------- | ------------------------------- |
+| **Método**               | AI/ML (sem workers humanos) | Workers humanos (~12k worldwide) | Workers humanos (~2k worldwide) |
+| **Velocidade média**     | Sub-segundo (AI)            | 5-15s (varia com hora do dia)    | ~5s (consistente)               |
+| **reCAPTCHA v2**         | ~$0.80-1.50/1k              | ~$1-3/1k                         | $0.95-2.00/1k                   |
+| **reCAPTCHA v3**         | ~$1-2/1k                    | ~$1.50-3/1k                      | $1.00-2.00/1k                   |
+| **reCAPTCHA Enterprise** | ~$2-5/1k                    | ~$1-3/1k                         | $5.00/1k                        |
+| **Cloudflare Turnstile** | ~$1-2/1k                    | ~$1.50/1k                        | $2.00/1k                        |
+| **CF Challenge Pages**   | ✅ Suportado nativamente    | ❌ Não suportado                 | ❌ Não suportado                |
+| **hCaptcha**             | ✅                          | ✅                               | ✅                              |
+| **Arkose/FunCaptcha**    | ✅                          | ✅ ($1.50-50/1k)                 | $3.00/1k                        |
+| **GeeTest**              | ✅                          | ✅ ($3/1k)                       | $1.80/1k                        |
+| **DataDome**             | ✅ Nativo                   | ✅ ($3/1k)                       | ❌                              |
+| **Akamai BMP**           | ❌                          | ✅ ($4.30/1k)                    | ❌                              |
+| **Amazon WAF**           | ✅                          | ✅ ($1.50/1k)                    | $2.00/1k                        |
+| **Image CAPTCHA**        | ✅                          | ✅ ($0.50/1k)                    | $0.50-0.70/1k                   |
+| **Depósito mínimo**      | ~$1                         | ~$3                              | ~$1                             |
+| **API pattern**          | createTask/getTaskResult    | createTask/getTaskResult         | createTask/getTaskResult        |
+| **Proxy support**        | ✅ (proxyless + proxied)    | ✅ (proxyless + proxied)         | ✅ (proxyless + proxied)        |
+| **SDK oficial (npm)**    | `capsolver-npm`             | `2captcha-ts`                    | HTTP API direto                 |
+| **Desde**                | ~2022                       | 2014                             | 2007                            |
+| **Custom tasks**         | ❌                          | ❌                               | ✅ (AntiGate — browser actions) |
+
+**Recomendação para Ultra Reader:**
+
+- **Default: CapSolver** — melhor velocidade (AI), único que resolve CF Challenge Pages + DataDome nativamente. Ideal para scraping automatizado.
+- **Fallback: 2Captcha** — mais barato para volume baixo, único com Akamai BMP. Widest CAPTCHA type coverage.
+- **Alternativa enterprise: Anti-Captcha** — mais estável (18 anos), AntiGate para custom tasks, melhor para reCAPTCHA v2 simples.
+
+**Estratégia multi-provider:** O `CaptchaSolver` abstrato tenta o provider primário. Se falhar (saldo zero, timeout, tipo não suportado), fallback automático para o secundário.
+
+#### 2.1.2 Arquivos a criar
+
+- `src/captcha/types.ts` — Tipos de CAPTCHA, config, task/result interfaces
+- `src/captcha/solver.ts` — Interface abstrata `CaptchaSolver` + `CaptchaSolverFactory`
+- `src/captcha/base-provider.ts` — Classe base com polling loop, retry, error handling
+- `src/captcha/capsolver.ts` — Implementação CapSolver (default provider)
+- `src/captcha/two-captcha.ts` — Implementação 2Captcha
+- `src/captcha/anti-captcha.ts` — Implementação Anti-Captcha
+- `src/captcha/multi-provider.ts` — Multi-provider com fallback automático
+- `src/captcha/site-key-extractor.ts` — Extração de siteKey do DOM (reCAPTCHA, hCaptcha, Turnstile, Arkose)
 - `src/captcha/index.ts` — Re-exports
 
-**Arquivos a modificar:**
+#### 2.1.3 Arquivos a modificar
 
-- `src/types.ts` — Adicionar `captchaSolver` config
+- `src/types.ts` — Adicionar `captcha?: CaptchaSolverConfig` e `captchaFallback?: CaptchaSolverConfig`
 - `src/engines/hero/index.ts` — Integrar solver quando CAPTCHA detectado
 - `src/cloudflare/handler.ts` — Usar solver para Turnstile interativo
-- `src/cloudflare/detector.ts` — Distinguir managed vs interactive Turnstile
+- `src/cloudflare/detector.ts` — Distinguir managed vs interactive Turnstile vs full challenge
 
-**API proposta:**
+#### 2.1.4 API proposta
 
 ```typescript
 // src/captcha/types.ts
+
+/** Supported CAPTCHA types */
+type CaptchaType =
+  | "recaptcha_v2"
+  | "recaptcha_v3"
+  | "recaptcha_enterprise"
+  | "hcaptcha"
+  | "turnstile"
+  | "cloudflare_challenge" // Full CF challenge page (CapSolver only)
+  | "funcaptcha" // Arkose Labs
+  | "geetest"
+  | "datadome"
+  | "akamai_bmp" // 2Captcha only
+  | "amazon_waf"
+  | "image" // Image-to-text
+  | "audio"; // Audio-to-text
+
+/** Provider identifiers */
+type CaptchaProvider = "capsolver" | "two-captcha" | "anti-captcha" | "custom";
+
+/** Which types each provider supports */
+const PROVIDER_CAPABILITIES: Record<CaptchaProvider, CaptchaType[]> = {
+  capsolver: [
+    "recaptcha_v2",
+    "recaptcha_v3",
+    "recaptcha_enterprise",
+    "hcaptcha",
+    "turnstile",
+    "cloudflare_challenge",
+    "funcaptcha",
+    "geetest",
+    "datadome",
+    "amazon_waf",
+    "image",
+  ],
+  "two-captcha": [
+    "recaptcha_v2",
+    "recaptcha_v3",
+    "recaptcha_enterprise",
+    "hcaptcha",
+    "turnstile",
+    "funcaptcha",
+    "geetest",
+    "datadome",
+    "akamai_bmp",
+    "amazon_waf",
+    "image",
+    "audio",
+  ],
+  "anti-captcha": [
+    "recaptcha_v2",
+    "recaptcha_v3",
+    "recaptcha_enterprise",
+    "hcaptcha",
+    "turnstile",
+    "funcaptcha",
+    "geetest",
+    "amazon_waf",
+    "image",
+  ],
+  custom: [], // User-defined
+};
+
 interface CaptchaSolverConfig {
-  provider: "two-captcha" | "anti-captcha" | "capsolver" | "custom";
+  provider: CaptchaProvider;
   apiKey: string;
   timeoutMs?: number; // default: 120000
   maxRetries?: number; // default: 3
+  pollingIntervalMs?: number; // default: 3000 (CapSolver: 1000)
   preferredMethod?: "token" | "click"; // default: 'token'
+  proxyless?: boolean; // default: true (use provider's proxies)
 }
+
+/** Unified task request */
+interface CaptchaTask {
+  type: CaptchaType;
+  pageUrl: string;
+  siteKey?: string; // reCAPTCHA, hCaptcha, Turnstile
+  action?: string; // reCAPTCHA v3 action
+  minScore?: number; // reCAPTCHA v3 minimum score (0.1-0.9)
+  enterprisePayload?: Record<string, unknown>; // reCAPTCHA Enterprise
+  imageBase64?: string; // Image CAPTCHA
+  gt?: string; // GeeTest gt param
+  challenge?: string; // GeeTest challenge param
+  subdomain?: string; // Arkose subdomain
+  publicKey?: string; // Arkose public key
+  proxy?: ProxyConfig; // Pass through user's proxy to solver
+}
+
+/** Unified task result */
+interface CaptchaResult {
+  token: string; // Solved token to inject
+  taskId: string; // Provider task ID
+  provider: CaptchaProvider;
+  type: CaptchaType;
+  solveTimeMs: number;
+  cost?: number; // Cost in USD (if available)
+}
+
+// src/captcha/solver.ts
 
 interface CaptchaSolver {
-  solveRecaptchaV2(siteKey: string, pageUrl: string): Promise<string>;
-  solveRecaptchaV3(siteKey: string, pageUrl: string, action?: string): Promise<string>;
-  solveHCaptcha(siteKey: string, pageUrl: string): Promise<string>;
-  solveTurnstile(siteKey: string, pageUrl: string): Promise<string>;
+  /** Solve any supported CAPTCHA type */
+  solve(task: CaptchaTask): Promise<CaptchaResult>;
+
+  /** Check if this provider supports a CAPTCHA type */
+  supports(type: CaptchaType): boolean;
+
+  /** Get remaining account balance in USD */
   getBalance(): Promise<number>;
+
+  /** Report incorrect solution (for refund) */
+  reportIncorrect(taskId: string): Promise<void>;
+
+  /** Provider identifier */
+  readonly provider: CaptchaProvider;
 }
 
-// src/types.ts
+// src/captcha/base-provider.ts
+
+abstract class BaseCaptchaProvider implements CaptchaSolver {
+  protected readonly config: CaptchaSolverConfig;
+  abstract readonly provider: CaptchaProvider;
+
+  /** Subclass implements API-specific createTask */
+  protected abstract createTask(task: CaptchaTask): Promise<string>;
+
+  /** Subclass implements API-specific getTaskResult */
+  protected abstract getTaskResult(taskId: string): Promise<CaptchaResult | null>;
+
+  /** Shared polling loop with exponential backoff */
+  async solve(task: CaptchaTask): Promise<CaptchaResult> {
+    if (!this.supports(task.type)) {
+      throw new CaptchaError(`${this.provider} does not support ${task.type}`);
+    }
+
+    const startTime = Date.now();
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt < (this.config.maxRetries ?? 3); attempt++) {
+      try {
+        const taskId = await this.createTask(task);
+        const pollingInterval = this.config.pollingIntervalMs ?? 3000;
+        const timeout = this.config.timeoutMs ?? 120000;
+
+        while (Date.now() - startTime < timeout) {
+          await delay(pollingInterval);
+          const result = await this.getTaskResult(taskId);
+          if (result) {
+            return { ...result, solveTimeMs: Date.now() - startTime };
+          }
+        }
+        throw new CaptchaError(`Timeout after ${timeout}ms`, { taskId });
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (!isRetryableError(error)) throw lastError;
+      }
+    }
+    throw lastError ?? new CaptchaError("Max retries exceeded");
+  }
+}
+
+// src/captcha/multi-provider.ts
+
+class MultiProviderSolver implements CaptchaSolver {
+  private primary: CaptchaSolver;
+  private fallback?: CaptchaSolver;
+
+  constructor(primary: CaptchaSolver, fallback?: CaptchaSolver) {
+    this.primary = primary;
+    this.fallback = fallback;
+  }
+
+  async solve(task: CaptchaTask): Promise<CaptchaResult> {
+    // 1. If primary supports the type, try it first
+    if (this.primary.supports(task.type)) {
+      try {
+        return await this.primary.solve(task);
+      } catch (error) {
+        if (this.fallback?.supports(task.type)) {
+          return await this.fallback.solve(task);
+        }
+        throw error;
+      }
+    }
+    // 2. If primary doesn't support it, go straight to fallback
+    if (this.fallback?.supports(task.type)) {
+      return await this.fallback.solve(task);
+    }
+    throw new CaptchaError(`No provider supports ${task.type}`);
+  }
+
+  get provider(): CaptchaProvider {
+    return this.primary.provider;
+  }
+  supports(type: CaptchaType): boolean {
+    return this.primary.supports(type) || (this.fallback?.supports(type) ?? false);
+  }
+  async getBalance(): Promise<number> {
+    return this.primary.getBalance();
+  }
+  async reportIncorrect(taskId: string): Promise<void> {
+    return this.primary.reportIncorrect(taskId);
+  }
+}
+
+// src/captcha/site-key-extractor.ts
+
+interface ExtractedCaptchaInfo {
+  type: CaptchaType;
+  siteKey: string;
+  action?: string; // reCAPTCHA v3
+  pageUrl: string;
+}
+
+/** Extracts CAPTCHA site keys from Hero DOM */
+async function extractCaptchaInfo(hero: Hero): Promise<ExtractedCaptchaInfo | null> {
+  const url = await hero.url;
+
+  // reCAPTCHA v2/v3 — look for data-sitekey attribute
+  const recaptchaKey = await hero.document.querySelector(
+    ".g-recaptcha[data-sitekey], [data-sitekey]"
+  );
+  if (recaptchaKey) {
+    const siteKey = await recaptchaKey.getAttribute("data-sitekey");
+    const action = await recaptchaKey.getAttribute("data-action");
+    const isV3 = await hero.document.querySelector('script[src*="recaptcha/api.js?render="]');
+    return {
+      type: isV3 ? "recaptcha_v3" : "recaptcha_v2",
+      siteKey: siteKey ?? "",
+      action: action ?? undefined,
+      pageUrl: url,
+    };
+  }
+
+  // hCaptcha — look for h-captcha div
+  const hcaptchaKey = await hero.document.querySelector(".h-captcha[data-sitekey]");
+  if (hcaptchaKey) {
+    return {
+      type: "hcaptcha",
+      siteKey: (await hcaptchaKey.getAttribute("data-sitekey")) ?? "",
+      pageUrl: url,
+    };
+  }
+
+  // Turnstile — look for cf-turnstile div
+  const turnstileKey = await hero.document.querySelector(".cf-turnstile[data-sitekey]");
+  if (turnstileKey) {
+    return {
+      type: "turnstile",
+      siteKey: (await turnstileKey.getAttribute("data-sitekey")) ?? "",
+      pageUrl: url,
+    };
+  }
+
+  // Arkose/FunCaptcha — look for enforcement script or iframe
+  const arkoseKey = await hero.document.querySelector(
+    '[data-public-key], script[src*="arkoselabs.com"]'
+  );
+  if (arkoseKey) {
+    return {
+      type: "funcaptcha",
+      siteKey: (await arkoseKey.getAttribute("data-public-key")) ?? "",
+      pageUrl: url,
+    };
+  }
+
+  return null;
+}
+
+// src/types.ts — additions
 interface ScrapeOptions {
   // ... existing
   captcha?: CaptchaSolverConfig;
+  captchaFallback?: CaptchaSolverConfig; // Auto-fallback provider
 }
 ```
 
-**Flow de integração no Hero engine:**
+#### 2.1.5 Flow de integração no Hero engine
 
 ```
 1. Hero navega para URL
 2. Cloudflare detector identifica challenge type
 3. Se challenge = turnstile/captcha:
-   a. Extrair siteKey do DOM
-   b. Chamar captchaSolver.solveTurnstile(siteKey, url)
-   c. Injetar token no form via hero.evaluate()
-   d. Submeter form
-   e. Aguardar redirect/page load
-4. Extrair conteúdo normalmente
+   a. extractCaptchaInfo(hero) → { type, siteKey, pageUrl }
+   b. Se siteKey encontrado:
+      i.  MultiProviderSolver.solve({ type, siteKey, pageUrl })
+      ii. Injetar token no callback:
+          - reCAPTCHA: hero.evaluate(() => grecaptcha.getResponse = () => token)
+          - hCaptcha: hero.evaluate(() => hcaptcha.getResponse = () => token)
+          - Turnstile: hero.evaluate(() => turnstile.getResponse = () => token)
+      iii. Submeter form via hero.click() no botão submit
+      iv.  Aguardar navigation/redirect (max 15s)
+   c. Se siteKey NÃO encontrado (CF Challenge page sem widget):
+      i.  Se CapSolver: usar cloudflare_challenge task type (resolve full page)
+      ii. Se outro provider: fallback para Hero polling (waitForChallengeResolution)
+4. Verificar se challenge resolvido (URL mudou ou challenge signals cleared)
+5. Se ainda blocked → retry com outro provider ou abort
+6. Extrair conteúdo normalmente
 ```
 
-**Dependências externas:**
+#### 2.1.6 Error handling & cost control
 
-- `2captcha` npm package (ou HTTP API direto)
-- API key de um serviço de CAPTCHA solving
+```typescript
+// Erros específicos de CAPTCHA
+class CaptchaError extends ReaderError {
+  constructor(
+    message: string,
+    options?: {
+      taskId?: string;
+      provider?: CaptchaProvider;
+      type?: CaptchaType;
+      cause?: Error;
+    }
+  ) {
+    super(message, { code: "CAPTCHA_FAILED", retryable: true, ...options });
+  }
+}
+
+class CaptchaBalanceError extends CaptchaError {
+  /* saldo insuficiente */
+}
+class CaptchaUnsupportedError extends CaptchaError {
+  /* tipo não suportado, retryable: false */
+}
+class CaptchaTimeoutError extends CaptchaError {
+  /* timeout no polling */
+}
+
+// Cost control — evitar gastar créditos desnecessariamente
+interface CaptchaCostControl {
+  maxSolvesPerMinute?: number; // default: 10
+  maxDailySpendUsd?: number; // default: unlimited
+  cacheTokens?: boolean; // default: true, cache tokens por (siteKey, type)
+  cacheTokenTtlMs?: number; // default: 90000 (tokens geralmente duram 2 min)
+}
+```
+
+#### 2.1.7 Dependências externas
+
+- HTTP `fetch()` direto para todas as APIs (sem SDK npm — reduz deps, mesmo createTask/getTaskResult pattern)
+- API key de pelo menos um provedor (CapSolver recomendado como default)
+- Custo estimado para uso baixo: ~$1-5/mês (poucas centenas de solves)
 
 ---
 
@@ -7494,12 +7834,15 @@ export function registerMcpCommand(program: Command): void {
 | `src/utils/page-interaction.ts`         | 2.4    | ~100             |
 | `src/utils/fingerprint-profiles.ts`     | 2.5    | ~80              |
 | `src/utils/poison-detector.ts`          | 5.1    | ~200             |
-| `src/captcha/solver.ts`                 | 2.1    | ~50              |
-| `src/captcha/two-captcha.ts`            | 2.1    | ~120             |
-| `src/captcha/anti-captcha.ts`           | 2.1    | ~120             |
-| `src/captcha/capsolver.ts`              | 2.1    | ~120             |
-| `src/captcha/types.ts`                  | 2.1    | ~40              |
-| `src/captcha/index.ts`                  | 2.1    | ~10              |
+| `src/captcha/types.ts`                  | 2.1    | ~120             |
+| `src/captcha/solver.ts`                 | 2.1    | ~40              |
+| `src/captcha/base-provider.ts`          | 2.1    | ~150             |
+| `src/captcha/capsolver.ts`              | 2.1    | ~180             |
+| `src/captcha/two-captcha.ts`            | 2.1    | ~150             |
+| `src/captcha/anti-captcha.ts`           | 2.1    | ~150             |
+| `src/captcha/multi-provider.ts`         | 2.1    | ~80              |
+| `src/captcha/site-key-extractor.ts`     | 2.1    | ~120             |
+| `src/captcha/index.ts`                  | 2.1    | ~15              |
 | `src/waf/detector.ts`                   | 3.1    | ~150             |
 | `src/waf/akamai.ts`                     | 3.1    | ~100             |
 | `src/waf/perimeterx.ts`                 | 3.1    | ~80              |
@@ -7618,7 +7961,7 @@ export function registerMcpCommand(program: Command): void {
 | -------------------------------- | ---------- | ----------------- | -------------------------------- |
 | **Phase 1** — Quick Wins         | 2-3 dias   | Nenhum            | 🔴 Fazer primeiro                |
 | **Phase 1.5** — API Discovery    | 4-7 dias   | Phase 1           | 🔴 Alto ROI, evita anti-bot      |
-| **Phase 2** — Core Anti-Bot      | 4-7 dias   | Phase 1 (parcial) | 🔴 Fazer segundo                 |
+| **Phase 2** — Core Anti-Bot      | 5-8 dias   | Phase 1 (parcial) | 🔴 Fazer segundo                 |
 | **Phase 3** — Advanced Evasion   | 10-15 dias | Phase 2           | 🟡 Fazer em seguida              |
 | **Phase 4** — Enterprise WAFs    | 7-13 dias  | Phase 3           | 🟡 Sob demanda                   |
 | **Phase 5** — Content Integrity  | 6-9 dias   | Phase 1           | 🔴 Fazer em paralelo com Phase 2 |
