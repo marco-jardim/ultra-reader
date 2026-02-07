@@ -5,6 +5,8 @@ type: software
 authors:
   - family-names: Kaul
     given-names: Nihal
-license: Apache-2.0
-url: "https://github.com/vakra-dev/reader"
-repository-code: "https://github.com/vakra-dev/reader"
+  - family-names: Jardim
+    given-names: Marco
+license: GPL-3.0-only
+url: "https://github.com/marco-jardim/ultra-reader"
+repository-code: "https://github.com/marco-jardim/ultra-reader"
