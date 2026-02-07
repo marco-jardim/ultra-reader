@@ -3,7 +3,14 @@ import { parseHTML } from "linkedom";
 import type { IBrowserPool } from "./browser/types";
 import { detectChallenge } from "./cloudflare/detector";
 import { waitForChallengeResolution } from "./cloudflare/handler";
-import { resolveUrl, isValidUrl, isSameDomain, getUrlKey, isContentUrl, shouldIncludeUrl } from "./utils/url-helpers";
+import {
+  resolveUrl,
+  isValidUrl,
+  isSameDomain,
+  getUrlKey,
+  isContentUrl,
+  shouldIncludeUrl,
+} from "./utils/url-helpers";
 import { fetchRobotsTxt, isUrlAllowed, type RobotsRules } from "./utils/robots-parser";
 import { rateLimit } from "./utils/rate-limiter";
 import { createLogger } from "./utils/logger";
@@ -35,7 +42,14 @@ import type { ScrapeResult } from "./types";
 export class Crawler {
   private options: Omit<
     Required<CrawlOptions>,
-    "proxy" | "timeoutMs" | "userAgent" | "includePatterns" | "excludePatterns" | "pool" | "removeAds" | "removeBase64Images"
+    | "proxy"
+    | "timeoutMs"
+    | "userAgent"
+    | "includePatterns"
+    | "excludePatterns"
+    | "pool"
+    | "removeAds"
+    | "removeBase64Images"
   > & {
     proxy?: CrawlOptions["proxy"];
     timeoutMs?: CrawlOptions["timeoutMs"];
@@ -55,7 +69,9 @@ export class Crawler {
   constructor(options: CrawlOptions) {
     // Pool must be provided by client
     if (!options.pool) {
-      throw new Error("Browser pool must be provided. Use ReaderClient for automatic pool management.");
+      throw new Error(
+        "Browser pool must be provided. Use ReaderClient for automatic pool management."
+      );
     }
     this.pool = options.pool;
 
@@ -274,7 +290,8 @@ export class Crawler {
       if (!isContentUrl(resolved)) return;
 
       // Check include/exclude patterns
-      if (!shouldIncludeUrl(resolved, this.options.includePatterns, this.options.excludePatterns)) return;
+      if (!shouldIncludeUrl(resolved, this.options.includePatterns, this.options.excludePatterns))
+        return;
 
       // Check if allowed by robots.txt
       if (!isUrlAllowed(resolved, this.robotsRules)) return;

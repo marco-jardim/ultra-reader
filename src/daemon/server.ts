@@ -133,14 +133,18 @@ export class DaemonServer {
       this.server!.listen(this.options.port, () => {
         this.startTime = Date.now();
         if (this.options.verbose) {
-          logger.info(`Daemon started on port ${this.options.port} with pool size ${this.options.poolSize}`);
+          logger.info(
+            `Daemon started on port ${this.options.port} with pool size ${this.options.poolSize}`
+          );
         }
         resolve();
       });
 
       this.server!.on("error", (error: NodeJS.ErrnoException) => {
         if (error.code === "EADDRINUSE") {
-          reject(new Error(`Port ${this.options.port} is already in use. Is another daemon running?`));
+          reject(
+            new Error(`Port ${this.options.port} is already in use. Is another daemon running?`)
+          );
         } else {
           reject(error);
         }
@@ -291,7 +295,11 @@ export class DaemonServer {
   /**
    * Send JSON response
    */
-  private sendResponse<T>(res: http.ServerResponse, statusCode: number, data: DaemonResponse<T>): void {
+  private sendResponse<T>(
+    res: http.ServerResponse,
+    statusCode: number,
+    data: DaemonResponse<T>
+  ): void {
     res.writeHead(statusCode, { "Content-Type": "application/json" });
     res.end(JSON.stringify(data));
   }
@@ -343,7 +351,11 @@ export async function getPidFilePath(): Promise<string> {
 /**
  * Check if daemon is running by reading PID file
  */
-export async function getDaemonInfo(): Promise<{ pid: number; port: number; startedAt: string } | null> {
+export async function getDaemonInfo(): Promise<{
+  pid: number;
+  port: number;
+  startedAt: string;
+} | null> {
   const fs = await import("fs/promises");
   const pidFile = await getPidFilePath();
 

@@ -571,9 +571,11 @@ function removeBase64ImagesFromDocument(document: Document): void {
   });
 
   // Remove source elements with base64 src/srcset
-  document.querySelectorAll("source[src^='data:'], source[srcset*='data:']").forEach((el: Element) => {
-    el.remove();
-  });
+  document
+    .querySelectorAll("source[src^='data:'], source[srcset*='data:']")
+    .forEach((el: Element) => {
+      el.remove();
+    });
 }
 
 /**

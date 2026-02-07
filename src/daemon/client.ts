@@ -136,7 +136,9 @@ export class DaemonClient {
 
       req.on("error", (error: NodeJS.ErrnoException) => {
         if (error.code === "ECONNREFUSED") {
-          reject(new Error(`Cannot connect to daemon on port ${this.options.port}. Is it running?`));
+          reject(
+            new Error(`Cannot connect to daemon on port ${this.options.port}. Is it running?`)
+          );
         } else {
           reject(error);
         }

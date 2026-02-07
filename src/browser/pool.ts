@@ -163,7 +163,9 @@ export class BrowserPool implements IBrowserPool {
     if (!instance) {
       // No available instances, queue the request
       if (this.verbose) {
-        this.logger.info(`No browsers available, queuing request (queue: ${this.queue.length + 1})`);
+        this.logger.info(
+          `No browsers available, queuing request (queue: ${this.queue.length + 1})`
+        );
       }
       return this.queueRequest();
     }

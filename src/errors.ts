@@ -219,10 +219,14 @@ export class ValidationError extends ReaderError {
  */
 export class InvalidUrlError extends ReaderError {
   constructor(url: string, reason?: string) {
-    super(reason ? `Invalid URL "${url}": ${reason}` : `Invalid URL: ${url}`, ReaderErrorCode.INVALID_URL, {
-      url,
-      retryable: false,
-    });
+    super(
+      reason ? `Invalid URL "${url}": ${reason}` : `Invalid URL: ${url}`,
+      ReaderErrorCode.INVALID_URL,
+      {
+        url,
+        retryable: false,
+      }
+    );
     this.name = "InvalidUrlError";
   }
 }
@@ -232,10 +236,14 @@ export class InvalidUrlError extends ReaderError {
  */
 export class RobotsBlockedError extends ReaderError {
   constructor(url: string) {
-    super(`URL blocked by robots.txt: ${url}. Set respectRobotsTxt: false to override.`, ReaderErrorCode.ROBOTS_BLOCKED, {
-      url,
-      retryable: false,
-    });
+    super(
+      `URL blocked by robots.txt: ${url}. Set respectRobotsTxt: false to override.`,
+      ReaderErrorCode.ROBOTS_BLOCKED,
+      {
+        url,
+        retryable: false,
+      }
+    );
     this.name = "RobotsBlockedError";
   }
 }
@@ -258,9 +266,13 @@ export class BrowserPoolError extends ReaderError {
  */
 export class ClientClosedError extends ReaderError {
   constructor() {
-    super("ReaderClient has been closed. Create a new instance to continue.", ReaderErrorCode.CLIENT_CLOSED, {
-      retryable: false,
-    });
+    super(
+      "ReaderClient has been closed. Create a new instance to continue.",
+      ReaderErrorCode.CLIENT_CLOSED,
+      {
+        retryable: false,
+      }
+    );
     this.name = "ClientClosedError";
   }
 }
@@ -270,9 +282,13 @@ export class ClientClosedError extends ReaderError {
  */
 export class NotInitializedError extends ReaderError {
   constructor(component: string) {
-    super(`${component} not initialized. This should not happen - please report this bug.`, ReaderErrorCode.NOT_INITIALIZED, {
-      retryable: false,
-    });
+    super(
+      `${component} not initialized. This should not happen - please report this bug.`,
+      ReaderErrorCode.NOT_INITIALIZED,
+      {
+        retryable: false,
+      }
+    );
     this.name = "NotInitializedError";
   }
 }

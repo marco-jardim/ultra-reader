@@ -14,7 +14,11 @@ export class EngineError extends Error {
   readonly engine: EngineName;
   readonly retryable: boolean;
 
-  constructor(engine: EngineName, message: string, options?: { cause?: Error; retryable?: boolean }) {
+  constructor(
+    engine: EngineName,
+    message: string,
+    options?: { cause?: Error; retryable?: boolean }
+  ) {
     super(`[${engine}] ${message}`);
     this.name = "EngineError";
     this.engine = engine;
@@ -50,7 +54,9 @@ export class InsufficientContentError extends EngineError {
   readonly threshold: number;
 
   constructor(engine: EngineName, contentLength: number, threshold: number = 100) {
-    super(engine, `Insufficient content: ${contentLength} chars (threshold: ${threshold})`, { retryable: true });
+    super(engine, `Insufficient content: ${contentLength} chars (threshold: ${threshold})`, {
+      retryable: true,
+    });
     this.name = "InsufficientContentError";
     this.contentLength = contentLength;
     this.threshold = threshold;

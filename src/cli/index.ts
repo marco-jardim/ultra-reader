@@ -29,7 +29,13 @@
 
 import { Command } from "commander";
 import { ReaderClient } from "../client";
-import { DaemonServer, DaemonClient, isDaemonRunning, getDaemonInfo, DEFAULT_DAEMON_PORT } from "../daemon";
+import {
+  DaemonServer,
+  DaemonClient,
+  isDaemonRunning,
+  getDaemonInfo,
+  DEFAULT_DAEMON_PORT,
+} from "../daemon";
 import { readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -54,7 +60,11 @@ program
 program
   .command("start")
   .description("Start the reader daemon server")
-  .option("-p, --port <n>", `Port to listen on (default: ${DEFAULT_DAEMON_PORT})`, String(DEFAULT_DAEMON_PORT))
+  .option(
+    "-p, --port <n>",
+    `Port to listen on (default: ${DEFAULT_DAEMON_PORT})`,
+    String(DEFAULT_DAEMON_PORT)
+  )
   .option("--pool-size <n>", "Browser pool size", "5")
   .option("--show-chrome", "Show browser windows for debugging")
   .option("-v, --verbose", "Enable verbose logging")
@@ -99,7 +109,11 @@ program
 program
   .command("stop")
   .description("Stop the running reader daemon")
-  .option("-p, --port <n>", `Daemon port (default: ${DEFAULT_DAEMON_PORT})`, String(DEFAULT_DAEMON_PORT))
+  .option(
+    "-p, --port <n>",
+    `Daemon port (default: ${DEFAULT_DAEMON_PORT})`,
+    String(DEFAULT_DAEMON_PORT)
+  )
   .action(async (options) => {
     const port = parseInt(options.port, 10);
     const client = new DaemonClient({ port });
@@ -121,7 +135,11 @@ program
 program
   .command("status")
   .description("Check daemon status")
-  .option("-p, --port <n>", `Daemon port (default: ${DEFAULT_DAEMON_PORT})`, String(DEFAULT_DAEMON_PORT))
+  .option(
+    "-p, --port <n>",
+    `Daemon port (default: ${DEFAULT_DAEMON_PORT})`,
+    String(DEFAULT_DAEMON_PORT)
+  )
   .action(async (options) => {
     // First check PID file
     const daemonInfo = await getDaemonInfo();
@@ -168,7 +186,11 @@ program
   .option("--batch-timeout <ms>", "Total timeout for entire batch operation", "300000")
   .option("--show-chrome", "Show browser window for debugging")
   .option("--standalone", "Force standalone mode (bypass daemon)")
-  .option("-p, --port <n>", `Daemon port (default: ${DEFAULT_DAEMON_PORT})`, String(DEFAULT_DAEMON_PORT))
+  .option(
+    "-p, --port <n>",
+    `Daemon port (default: ${DEFAULT_DAEMON_PORT})`,
+    String(DEFAULT_DAEMON_PORT)
+  )
   .option("-v, --verbose", "Enable verbose logging")
   .option("--no-main-content", "Disable main content extraction (include full page)")
   .option("--include-tags <selectors>", "CSS selectors for elements to include (comma-separated)")
@@ -247,7 +269,15 @@ program
         forceEngine: options.engine,
         skipEngines,
         onProgress: options.verbose
-          ? ({ completed, total, currentUrl }: { completed: number; total: number; currentUrl: string }) => {
+          ? ({
+              completed,
+              total,
+              currentUrl,
+            }: {
+              completed: number;
+              total: number;
+              currentUrl: string;
+            }) => {
               console.error(`[${completed}/${total}] ${currentUrl}`);
             }
           : undefined,
@@ -304,7 +334,11 @@ program
   .option("-d, --depth <n>", "Maximum crawl depth", "1")
   .option("-m, --max-pages <n>", "Maximum pages to discover", "20")
   .option("-s, --scrape", "Also scrape content of discovered pages")
-  .option("-f, --format <formats>", "Content formats when scraping (comma-separated: markdown,html)", "markdown")
+  .option(
+    "-f, --format <formats>",
+    "Content formats when scraping (comma-separated: markdown,html)",
+    "markdown"
+  )
   .option("-o, --output <file>", "Output file (stdout if omitted)")
   .option("--delay <ms>", "Delay between requests in milliseconds", "1000")
   .option("-t, --timeout <ms>", "Total timeout for crawl operation in milliseconds")
@@ -314,7 +348,11 @@ program
   .option("--user-agent <string>", "Custom user agent string")
   .option("--show-chrome", "Show browser window for debugging")
   .option("--standalone", "Force standalone mode (bypass daemon)")
-  .option("-p, --port <n>", `Daemon port (default: ${DEFAULT_DAEMON_PORT})`, String(DEFAULT_DAEMON_PORT))
+  .option(
+    "-p, --port <n>",
+    `Daemon port (default: ${DEFAULT_DAEMON_PORT})`,
+    String(DEFAULT_DAEMON_PORT)
+  )
   .option("-v, --verbose", "Enable verbose logging")
   .action(async (url: string, options) => {
     const port = parseInt(options.port, 10);

@@ -28,8 +28,7 @@ export function createLogger(
   name: string = "reader",
   level: string = process.env.LOG_LEVEL || "info"
 ) {
-  const usePretty =
-    process.env.NODE_ENV !== "production" && hasPinoPretty();
+  const usePretty = process.env.NODE_ENV !== "production" && hasPinoPretty();
 
   return pino({
     name,

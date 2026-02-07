@@ -53,9 +53,13 @@ export class HeroEngine implements Engine {
         // Set up abort handling
         let aborted = false;
         if (abortSignal) {
-          abortSignal.addEventListener("abort", () => {
-            aborted = true;
-          }, { once: true });
+          abortSignal.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+            },
+            { once: true }
+          );
         }
 
         // Navigate to URL
@@ -102,7 +106,9 @@ export class HeroEngine implements Engine {
             throw new ChallengeDetectedError("hero", `unresolved: ${detection.type}`);
           }
 
-          logger?.debug(`[hero] Challenge resolved via ${resolution.method} in ${resolution.waitedMs}ms`);
+          logger?.debug(
+            `[hero] Challenge resolved via ${resolution.method} in ${resolution.waitedMs}ms`
+          );
         }
 
         if (aborted) {
@@ -185,7 +191,11 @@ export class HeroEngine implements Engine {
   /**
    * Wait for the final page to load after any Cloudflare redirects
    */
-  private async waitForFinalPage(hero: Hero, originalUrl: string, logger?: EngineMeta["logger"]): Promise<void> {
+  private async waitForFinalPage(
+    hero: Hero,
+    originalUrl: string,
+    logger?: EngineMeta["logger"]
+  ): Promise<void> {
     const maxWaitMs = 15000;
     const startTime = Date.now();
 
