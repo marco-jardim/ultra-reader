@@ -44,6 +44,9 @@ temp/
 # Hero/Ulixee session data
 .ulixee/
 
+# ultra-reader cache (Phase 1.5 discovery profiles)
+.ultra-reader/
+
 # Claude Code context
 CLAUDE.md
 

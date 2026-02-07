@@ -14,6 +14,13 @@ import {
 } from "./types";
 import { EngineOrchestrator, AllEnginesFailedError } from "./engines/index.js";
 import { configureDefaultRotator } from "./utils/user-agents.js";
+import {
+  discoverSite,
+  loadCachedProfile,
+  saveCachedProfile,
+  finalizeProfile,
+  type SiteProfile,
+} from "./discovery/site-profile.js";
 
 /**
  * Scraper class with built-in concurrency support
@@ -41,6 +48,8 @@ export class Scraper {
   private logger = createLogger("scraper");
   private orchestrator: EngineOrchestrator;
   private robotsCache: Map<string, RobotsRules | null> = new Map();
+  private siteProfileCache: Map<string, SiteProfile | null> = new Map();
+  private siteProfileInFlight: Map<string, Promise<SiteProfile | null>> = new Map();
 
   constructor(options: ScrapeOptions) {
     // Merge with defaults
@@ -84,6 +93,66 @@ export class Scraper {
       this.robotsCache.set(origin, rules);
     }
     return this.robotsCache.get(origin) ?? null;
+  }
+
+  /**
+   * Get Phase 1.5 discovery profile for a domain.
+   * Cached per-domain and de-duplicated across concurrent scrapes.
+   */
+  private async getSiteProfile(url: string): Promise<SiteProfile | null> {
+    if (this.options.discovery === false) return null;
+
+    let domain: string;
+    try {
+      domain = new URL(url).hostname;
+    } catch {
+      return null;
+    }
+
+    if (this.siteProfileCache.has(domain)) {
+      return this.siteProfileCache.get(domain) ?? null;
+    }
+
+    const inFlight = this.siteProfileInFlight.get(domain);
+    if (inFlight) return inFlight;
+
+    const promise = (async (): Promise<SiteProfile | null> => {
+      const cacheDir = this.options.discoveryOptions?.cacheDir;
+      const ttlMs = this.options.discoveryOptions?.cacheTtlMs;
+
+      try {
+        const cached = await loadCachedProfile(domain, cacheDir, ttlMs);
+        if (cached) return cached;
+      } catch {
+        // ignore cache errors
+      }
+
+      try {
+        const profile = await discoverSite(url, this.options.discoveryOptions);
+        try {
+          await saveCachedProfile(profile, cacheDir);
+        } catch {
+          // ignore cache write errors
+        }
+        return profile;
+      } catch {
+        return null;
+      }
+    })();
+
+    this.siteProfileInFlight.set(domain, promise);
+    try {
+      const result = await promise;
+      // Evict if cache too large
+      if (this.siteProfileCache.size >= 1000) {
+        const firstKey = this.siteProfileCache.keys().next().value;
+        if (firstKey) this.siteProfileCache.delete(firstKey);
+      }
+      this.siteProfileCache.set(domain, result);
+      return result;
+    } finally {
+      this.siteProfileInFlight.delete(domain);
+    }
   }
 
   /**
@@ -182,12 +251,46 @@ export class Scraper {
     try {
       const orchestrator = this.orchestrator;
 
+      // Phase 1.5: discovery (well-known, sitemap, OpenAPI, GraphQL)
+      // Run before the engine cascade to avoid "door front" scraping when APIs are available.
+      let siteProfile = await this.getSiteProfile(url);
+
       // Use orchestrator to fetch HTML
       const engineResult = await orchestrator.scrape({
         url,
         options: this.options,
         logger: this.logger,
       });
+
+      // Phase 1.5.5: if Hero was used and interception is enabled, merge discovered APIs
+      // into the SiteProfile and re-save the cached profile.
+      if (
+        siteProfile &&
+        this.options.discoveryOptions?.interceptApiRequests === true &&
+        engineResult.engine === "hero"
+      ) {
+        const discovered = engineResult.artifacts?.discoveredApis;
+        if (discovered && discovered.totalRequests > 0 && discovered.patterns.length > 0) {
+          const domain = new URL(url).hostname;
+          const existing = siteProfile.discoveredApis.totalRequests;
+          if (discovered.totalRequests >= existing) {
+            const { summary: _summary, contentHash: _contentHash, ...base } = siteProfile;
+            siteProfile = finalizeProfile({
+              ...base,
+              generatedAt: new Date().toISOString(),
+              discoveredApis: discovered as SiteProfile["discoveredApis"],
+            });
+
+            // Update in-memory cache and persist.
+            this.siteProfileCache.set(domain, siteProfile);
+            try {
+              await saveCachedProfile(siteProfile, this.options.discoveryOptions?.cacheDir);
+            } catch {
+              // ignore cache write errors
+            }
+          }
+        }
+      }
 
       if (this.options.verbose) {
         this.logger.info(
@@ -252,17 +355,23 @@ export class Scraper {
       }
 
       // Build result
+      const metadata: WebsiteScrapeResult["metadata"] = {
+        baseUrl: url,
+        totalPages: 1,
+        scrapedAt: new Date().toISOString(),
+        duration,
+        website: websiteMetadata,
+        proxy: proxyMetadata,
+      };
+
+      if (siteProfile) {
+        metadata.siteProfile = siteProfile;
+      }
+
       const result: WebsiteScrapeResult = {
         markdown,
         html: htmlOutput,
-        metadata: {
-          baseUrl: url,
-          totalPages: 1,
-          scrapedAt: new Date().toISOString(),
-          duration,
-          website: websiteMetadata,
-          proxy: proxyMetadata,
-        },
+        metadata,
       };
 
       return result;

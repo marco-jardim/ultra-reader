@@ -34,6 +34,16 @@ export interface EngineResult {
   engine: EngineName;
   /** Time taken in milliseconds */
   duration: number;
+
+  /** Optional engine-specific artifacts (non-HTML signals) */
+  artifacts?: {
+    /** Phase 1.5: APIs discovered via Hero request interception */
+    discoveredApis?: {
+      patterns: unknown[];
+      totalRequests: number;
+      uniqueEndpoints: number;
+    };
+  };
 }
 
 /**

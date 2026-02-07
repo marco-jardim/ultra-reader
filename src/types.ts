@@ -1,5 +1,6 @@
 import type { IBrowserPool } from "./browser/types";
 import type { EngineName } from "./engines/types.js";
+import type { DiscoveryOptions, SiteProfile } from "./discovery/site-profile.js";
 
 /**
  * Proxy configuration for Hero
@@ -163,6 +164,16 @@ export interface ScrapeOptions {
 
   /** Generate plausible Referer headers (default: true) */
   spoofReferer?: boolean;
+
+  // ==========================================================================
+  // Discovery options (Phase 1.5)
+  // ==========================================================================
+
+  /** Execute API/sitemap discovery before scraping (default: true) */
+  discovery?: boolean;
+
+  /** Options for discovery (Phase 1.5) */
+  discoveryOptions?: DiscoveryOptions;
 }
 
 /**
@@ -275,6 +286,9 @@ export interface WebsiteScrapeResult {
 
     /** Proxy used for this request (if proxy pooling was enabled) */
     proxy?: ProxyMetadata;
+
+    /** Phase 1.5: site profile (APIs, sitemaps, etc.) */
+    siteProfile?: SiteProfile;
   };
 }
 
@@ -394,6 +408,9 @@ export const DEFAULT_OPTIONS: Omit<
   // Anti-detection defaults
   respectRobots: true,
   spoofReferer: true,
+  // Discovery defaults
+  discovery: true,
+  discoveryOptions: {},
 };
 
 /**

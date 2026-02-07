@@ -65,6 +65,11 @@ export {
 export { rateLimit, RateLimiter, jitteredDelay } from "./utils/rate-limiter";
 
 // =============================================================================
+// Discovery exports (Phase 1.5)
+// =============================================================================
+export * from "./discovery";
+
+// =============================================================================
 // User-Agent rotation exports (for advanced usage)
 // =============================================================================
 export { getRandomUserAgent, generateReferer, UserAgentRotator } from "./utils/user-agents";

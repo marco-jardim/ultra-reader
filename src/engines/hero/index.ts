@@ -19,6 +19,7 @@ import { ENGINE_CONFIGS } from "../types.js";
 import { detectChallenge } from "../../cloudflare/detector.js";
 import { waitForChallengeResolution } from "../../cloudflare/handler.js";
 import type { IBrowserPool } from "../../browser/types.js";
+import { setupApiInterceptor } from "../../discovery/api-interceptor.js";
 
 /**
  * Minimum content length threshold
@@ -50,110 +51,132 @@ export class HeroEngine implements Engine {
 
     try {
       const result = await pool.withBrowser(async (hero: Hero) => {
-        // Set up abort handling
-        let aborted = false;
-        if (abortSignal) {
-          abortSignal.addEventListener(
-            "abort",
-            () => {
-              aborted = true;
-            },
-            { once: true }
-          );
-        }
+        const interceptApis = options.discoveryOptions?.interceptApiRequests === true;
+        const interceptor = interceptApis
+          ? setupApiInterceptor(hero, options.discoveryOptions?.apiInterceptorOptions)
+          : null;
 
-        // Navigate to URL
-        const timeoutMs = options.timeoutMs || this.config.maxTimeout;
-        await hero.goto(url, { timeoutMs });
-
-        if (aborted) {
-          throw new EngineTimeoutError("hero", Date.now() - startTime);
-        }
-
-        // Wait for initial page load
         try {
-          await hero.waitForLoad("DomContentLoaded", { timeoutMs });
-        } catch {
-          // Timeout is OK, continue anyway
-        }
-        await hero.waitForPaintingStable();
-
-        if (aborted) {
-          throw new EngineTimeoutError("hero", Date.now() - startTime);
-        }
-
-        // Detect and handle Cloudflare challenge
-        const initialUrl = await hero.url;
-        const detection = await detectChallenge(hero);
-
-        if (detection.isChallenge) {
-          logger?.debug(`[hero] Challenge detected: ${detection.type}`);
-
-          // If it's a blocked challenge, we can't proceed
-          if (detection.type === "blocked") {
-            throw new ChallengeDetectedError("hero", "blocked");
+          // Set up abort handling
+          let aborted = false;
+          if (abortSignal) {
+            abortSignal.addEventListener(
+              "abort",
+              () => {
+                aborted = true;
+              },
+              { once: true }
+            );
           }
 
-          // Wait for resolution
-          const resolution = await waitForChallengeResolution(hero, {
-            maxWaitMs: 45000,
-            pollIntervalMs: 500,
-            verbose: options.verbose,
-            initialUrl,
-          });
+          // Navigate to URL
+          const timeoutMs = options.timeoutMs || this.config.maxTimeout;
+          await hero.goto(url, { timeoutMs });
 
-          if (!resolution.resolved) {
-            throw new ChallengeDetectedError("hero", `unresolved: ${detection.type}`);
+          if (aborted) {
+            throw new EngineTimeoutError("hero", Date.now() - startTime);
           }
 
-          logger?.debug(
-            `[hero] Challenge resolved via ${resolution.method} in ${resolution.waitedMs}ms`
-          );
-        }
-
-        if (aborted) {
-          throw new EngineTimeoutError("hero", Date.now() - startTime);
-        }
-
-        // Wait for final page to stabilize (handles Cloudflare silent redirects)
-        await this.waitForFinalPage(hero, url, logger);
-
-        if (aborted) {
-          throw new EngineTimeoutError("hero", Date.now() - startTime);
-        }
-
-        // Wait for selector if specified
-        if (options.waitForSelector) {
+          // Wait for initial page load
           try {
-            await hero.waitForElement(hero.document.querySelector(options.waitForSelector), {
-              timeoutMs,
-            });
+            await hero.waitForLoad("DomContentLoaded", { timeoutMs });
           } catch {
-            logger?.debug(`[hero] Selector not found: ${options.waitForSelector}`);
+            // Timeout is OK, continue anyway
           }
+          await hero.waitForPaintingStable();
+
+          if (aborted) {
+            throw new EngineTimeoutError("hero", Date.now() - startTime);
+          }
+
+          // Detect and handle Cloudflare challenge
+          const initialUrl = await hero.url;
+          const detection = await detectChallenge(hero);
+
+          if (detection.isChallenge) {
+            logger?.debug(`[hero] Challenge detected: ${detection.type}`);
+
+            // If it's a blocked challenge, we can't proceed
+            if (detection.type === "blocked") {
+              throw new ChallengeDetectedError("hero", "blocked");
+            }
+
+            // Wait for resolution
+            const resolution = await waitForChallengeResolution(hero, {
+              maxWaitMs: 45000,
+              pollIntervalMs: 500,
+              verbose: options.verbose,
+              initialUrl,
+            });
+
+            if (!resolution.resolved) {
+              throw new ChallengeDetectedError("hero", `unresolved: ${detection.type}`);
+            }
+
+            logger?.debug(
+              `[hero] Challenge resolved via ${resolution.method} in ${resolution.waitedMs}ms`
+            );
+          }
+
+          if (aborted) {
+            throw new EngineTimeoutError("hero", Date.now() - startTime);
+          }
+
+          // Wait for final page to stabilize (handles Cloudflare silent redirects)
+          await this.waitForFinalPage(hero, url, logger);
+
+          if (aborted) {
+            throw new EngineTimeoutError("hero", Date.now() - startTime);
+          }
+
+          // Wait for selector if specified
+          if (options.waitForSelector) {
+            try {
+              await hero.waitForElement(hero.document.querySelector(options.waitForSelector), {
+                timeoutMs,
+              });
+            } catch {
+              logger?.debug(`[hero] Selector not found: ${options.waitForSelector}`);
+            }
+          }
+
+          // Extract content
+          const html = await hero.document.documentElement.outerHTML;
+          const finalUrl = await hero.url;
+
+          // Validate content length
+          const textContent = this.extractText(html);
+          if (textContent.length < MIN_CONTENT_LENGTH) {
+            logger?.debug(`[hero] Insufficient content: ${textContent.length} chars`);
+            throw new InsufficientContentError("hero", textContent.length, MIN_CONTENT_LENGTH);
+          }
+
+          const duration = Date.now() - startTime;
+          logger?.debug(`[hero] Success: ${html.length} chars in ${duration}ms`);
+
+          const result: EngineResult = {
+            html,
+            url: finalUrl,
+            statusCode: 200, // Hero doesn't expose status code directly
+            engine: "hero" as const,
+            duration,
+          };
+
+          if (interceptor) {
+            const patterns = interceptor.getApiPatterns();
+            result.artifacts = {
+              discoveredApis: {
+                patterns,
+                totalRequests: interceptor.count,
+                uniqueEndpoints: patterns.length,
+              },
+            };
+          }
+
+          return result;
+        } finally {
+          interceptor?.stop();
         }
-
-        // Extract content
-        const html = await hero.document.documentElement.outerHTML;
-        const finalUrl = await hero.url;
-
-        // Validate content length
-        const textContent = this.extractText(html);
-        if (textContent.length < MIN_CONTENT_LENGTH) {
-          logger?.debug(`[hero] Insufficient content: ${textContent.length} chars`);
-          throw new InsufficientContentError("hero", textContent.length, MIN_CONTENT_LENGTH);
-        }
-
-        const duration = Date.now() - startTime;
-        logger?.debug(`[hero] Success: ${html.length} chars in ${duration}ms`);
-
-        return {
-          html,
-          url: finalUrl,
-          statusCode: 200, // Hero doesn't expose status code directly
-          engine: "hero" as const,
-          duration,
-        };
       });
 
       return result;
