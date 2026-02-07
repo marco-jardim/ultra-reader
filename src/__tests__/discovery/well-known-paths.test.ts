@@ -48,10 +48,80 @@ describe("probeWellKnownPaths", () => {
     const openapiResults = result.get("openapi");
     expect(openapiResults).toBeTruthy();
 
-    const ok = openapiResults!.find((r) => r.path === okPath);
+    const ok = (openapiResults ?? []).find((r) => r.path === okPath);
     expect(ok?.found).toBe(true);
     expect(ok?.statusCode).toBe(200);
     expect(ok?.contentType).toContain("application/json");
+  });
+
+  it("falls back to GET when HEAD is blocked (405)", async () => {
+    const okPath = WELL_KNOWN_PATHS.openapi[0];
+
+    const fetchMock = mockFetch(async (input, init) => {
+      const url = new URL(String(input));
+
+      if (url.pathname !== okPath) {
+        return new Response("", { status: 404 });
+      }
+
+      if (init?.method === "HEAD") {
+        return new Response("", { status: 405 });
+      }
+
+      expect(init?.method).toBe("GET");
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      expect(headers.Range).toBe("bytes=0-2047");
+
+      return new Response("{}", {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "content-length": "2",
+        },
+      });
+    });
+
+    const result = await probeWellKnownPaths("https://example.com", {
+      categories: ["openapi"],
+      concurrency: 1,
+      timeoutMs: 1000,
+      userAgent: "UA-Test",
+    });
+
+    const openapiResults = result.get("openapi") ?? [];
+    const ok = openapiResults.find((r) => r.path === okPath);
+    expect(ok?.found).toBe(true);
+    expect(ok?.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("treats 401/403 as existing endpoints for candidate selection", async () => {
+    const okPath = WELL_KNOWN_PATHS.openapi[0];
+
+    mockFetch(async (input, init) => {
+      const url = new URL(String(input));
+      expect(init?.method).toBe("HEAD");
+
+      if (url.pathname === okPath) {
+        return new Response("", {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return new Response("", { status: 404 });
+    });
+
+    const result = await probeWellKnownPaths("https://example.com", {
+      categories: ["openapi"],
+      concurrency: 1,
+      timeoutMs: 1000,
+    });
+
+    const openapiResults = result.get("openapi") ?? [];
+    const ok = openapiResults.find((r) => r.path === okPath);
+    expect(ok?.found).toBe(true);
+    expect(ok?.statusCode).toBe(401);
   });
 
   it("can probe only specific categories", async () => {

@@ -31,18 +31,18 @@ Ultra Reader is a **power scraping SDK** built for AI agents and data pipelines.
 
 **What makes it different from the upstream Reader:**
 
-| Capability | Reader (upstream) | Ultra Reader (this fork) |
-| --- | --- | --- |
-| HTML → Markdown | Yes | Yes |
-| 3-Engine cascade (HTTP → TLS → Chromium) | Yes | Yes |
-| Anti-bot evasion (44 mechanisms) | Basic | **Active mitigation** — UA rotation, referer spoofing, jitter, client hints |
-| API Discovery | No | **Yes** — sitemap, Swagger/OpenAPI, GraphQL, endpoint mapping |
-| CAPTCHA solving | No | **Planned** — 2Captcha, Anti-Captcha, CapSolver |
-| Enterprise WAF bypass | No | **Planned** — Akamai, PerimeterX, DataDome, Kasada |
-| MCP Server for AI agents | No | **Planned** — stdio/SSE/HTTP transports |
-| JWT/OAuth extraction | No | **Planned** — token discovery, OAuth flows, session replay |
-| LLM-assisted reverse engineering | No | **Planned** — JS deobfuscation, signing extraction |
-| Circuit breaker + adaptive engines | No | **Planned** — per-domain failure tracking, engine affinity cache |
+| Capability                               | Reader (upstream) | Ultra Reader (this fork)                                                    |
+| ---------------------------------------- | ----------------- | --------------------------------------------------------------------------- |
+| HTML → Markdown                          | Yes               | Yes                                                                         |
+| 3-Engine cascade (HTTP → TLS → Chromium) | Yes               | Yes                                                                         |
+| Anti-bot evasion (44 mechanisms)         | Basic             | **Active mitigation** — UA rotation, referer spoofing, jitter, client hints |
+| API Discovery                            | No                | **Yes** — sitemap, Swagger/OpenAPI, GraphQL, endpoint mapping               |
+| CAPTCHA solving                          | No                | **Planned** — 2Captcha, Anti-Captcha, CapSolver                             |
+| Enterprise WAF bypass                    | No                | **Planned** — Akamai, PerimeterX, DataDome, Kasada                          |
+| MCP Server for AI agents                 | No                | **Planned** — stdio/SSE/HTTP transports                                     |
+| JWT/OAuth extraction                     | No                | **Planned** — token discovery, OAuth flows, session replay                  |
+| LLM-assisted reverse engineering         | No                | **Planned** — JS deobfuscation, signing extraction                          |
+| Circuit breaker + adaptive engines       | No                | **Planned** — per-domain failure tracking, engine affinity cache            |
 
 ## Installation
 
@@ -57,17 +57,17 @@ npm install @vakra-dev/reader
 ### Quick Start
 
 ```typescript
-import { ReaderClient } from '@vakra-dev/reader';
+import { ReaderClient } from "@vakra-dev/reader";
 
 const reader = new ReaderClient();
 
 // Scrape → clean markdown
-const result = await reader.scrape({ urls: ['https://example.com'] });
+const result = await reader.scrape({ urls: ["https://example.com"] });
 console.log(result.data[0].markdown);
 
 // Crawl → discover + scrape pages
 const pages = await reader.crawl({
-  url: 'https://example.com',
+  url: "https://example.com",
   depth: 2,
   scrape: true,
 });
@@ -83,58 +83,80 @@ The main entry point. Manages browser lifecycle, proxy rotation, and engine orch
 ```typescript
 const reader = new ReaderClient({
   verbose: true,
-  showChrome: false,               // Show browser window for debugging
-  proxies: [                       // Proxy rotation pool
-    { host: 'proxy1.example.com', port: 8080, username: 'user', password: 'pass' },
-    { host: 'proxy2.example.com', port: 8080, username: 'user', password: 'pass' },
+  showChrome: false, // Show browser window for debugging
+  proxies: [
+    // Proxy rotation pool
+    { host: "proxy1.example.com", port: 8080, username: "user", password: "pass" },
+    { host: "proxy2.example.com", port: 8080, username: "user", password: "pass" },
   ],
-  proxyRotation: 'round-robin',    // or 'random'
+  proxyRotation: "round-robin", // or 'random'
   browserPool: {
-    size: 5,                       // Browser instances in pool
-    retireAfterPages: 50,          // Recycle after N page loads
-    retireAfterMinutes: 15,        // Recycle after N minutes
-    maxQueueSize: 100,             // Max pending requests
+    size: 5, // Browser instances in pool
+    retireAfterPages: 50, // Recycle after N page loads
+    retireAfterMinutes: 15, // Recycle after N minutes
+    maxQueueSize: 100, // Max pending requests
   },
 });
 ```
 
-| Method | Returns | Description |
-| --- | --- | --- |
-| `scrape(options)` | `Promise<ScrapeResult>` | Scrape one or more URLs |
-| `crawl(options)` | `Promise<CrawlResult>` | Crawl a website to discover pages |
-| `start()` | `Promise<void>` | Pre-initialize HeroCore (optional) |
-| `isReady()` | `boolean` | Check if client is initialized |
-| `close()` | `Promise<void>` | Close client and release resources |
+| Method            | Returns                 | Description                        |
+| ----------------- | ----------------------- | ---------------------------------- |
+| `scrape(options)` | `Promise<ScrapeResult>` | Scrape one or more URLs            |
+| `crawl(options)`  | `Promise<CrawlResult>`  | Crawl a website to discover pages  |
+| `start()`         | `Promise<void>`         | Pre-initialize HeroCore (optional) |
+| `isReady()`       | `boolean`               | Check if client is initialized     |
+| `close()`         | `Promise<void>`         | Close client and release resources |
 
 ### `scrape(options)`
 
 ```typescript
 const result = await reader.scrape({
-  urls: ['https://example.com', 'https://example.org'],
-  formats: ['markdown', 'html'],       // Output formats
-  onlyMainContent: true,                // Strip nav/header/footer (default: true)
-  includeTags: ['article', '.content'], // CSS selectors to keep
-  excludeTags: ['.ads', '.sidebar'],    // CSS selectors to remove
-  batchConcurrency: 3,                  // Parallel URL processing
-  batchTimeoutMs: 300000,               // Total batch timeout
-  maxRetries: 2,                        // Retry attempts per URL
-  timeoutMs: 30000,                     // Per-request timeout
+  urls: ["https://example.com", "https://example.org"],
+  formats: ["markdown", "html"], // Output formats
+  onlyMainContent: true, // Strip nav/header/footer (default: true)
+  includeTags: ["article", ".content"], // CSS selectors to keep
+  excludeTags: [".ads", ".sidebar"], // CSS selectors to remove
+  batchConcurrency: 3, // Parallel URL processing
+  batchTimeoutMs: 300000, // Total batch timeout
+  maxRetries: 2, // Retry attempts per URL
+  timeoutMs: 30000, // Per-request timeout
 
   // Anti-bot options (Phase 1)
-  respectRobots: false,                 // Skip robots.txt checks (default: true)
-  userAgent: 'custom-ua',              // Override rotated UA
-  spoofReferer: true,                   // Google/Bing referer (default: true)
-  uaRotation: 'weighted',              // 'random' | 'round-robin' | 'weighted'
-  stickyUaPerDomain: true,             // Same UA per domain across requests
+  respectRobots: false, // Skip robots.txt checks (default: true)
+  userAgent: "custom-ua", // Override rotated UA
+  spoofReferer: true, // Google/Bing referer (default: true)
+  uaRotation: "weighted", // 'random' | 'round-robin' | 'weighted'
+  stickyUaPerDomain: true, // Same UA per domain across requests
 
   // Proxy per-request
   proxy: {
-    type: 'residential',
-    host: 'proxy.example.com',
+    type: "residential",
+    host: "proxy.example.com",
     port: 8080,
-    username: 'user',
-    password: 'pass',
-    country: 'us',
+    username: "user",
+    password: "pass",
+    country: "us",
+  },
+
+  // API discovery (Phase 1.5)
+  discovery: true,
+  discoveryOptions: {
+    // Optional: override discovery networking. If omitted, discovery will inherit
+    // `proxy`, `headers`, and `userAgent` from the scrape options.
+    network: {
+      proxyUrl: "http://user:pass@proxy.example.com:8080",
+      headers: { "x-client": "ultra-reader" },
+      userAgent: "custom-ua",
+    },
+    parseSitemaps: true,
+    discoverOpenApi: true,
+    introspectGraphQL: true,
+    profileEndpoints: true,
+    interceptApiRequests: false, // when true and Hero runs, request/response data is cached
+    apiInterceptorOptions: {
+      maxCapturedRequests: 200,
+      maxResponseSize: 262144,
+    },
   },
 
   // Progress tracking
@@ -144,7 +166,7 @@ const result = await reader.scrape({
 
   // Browser control
   showChrome: false,
-  waitForSelector: '#content',          // Wait for element before extracting
+  waitForSelector: "#content", // Wait for element before extracting
   verbose: true,
 });
 ```
@@ -173,23 +195,33 @@ interface WebsiteScrapeResult {
     scrapedAt: string;
     duration: number;
     website: WebsiteMetadata;
+    siteProfile?: SiteProfile; // Phase 1.5 discovery output (if enabled)
   };
 }
 ```
+
+### Discovery (Phase 1.5)
+
+When `discovery: true` is set on `scrape(options)`, Ultra Reader runs a per-domain discovery pass before scraping and attaches results to `WebsiteScrapeResult.metadata.siteProfile`.
+
+- Signals: sitemap discovery, OpenAPI/Swagger probing, GraphQL introspection, endpoint profiling.
+- Cache: profiles are cached per-domain under `~/.ultra-reader/profiles`.
+- Network consistency: discovery requests can be routed through a proxy via `discoveryOptions.network.proxyUrl`.
+- Note on interception: if `discoveryOptions.interceptApiRequests: true` and the Hero engine runs, Ultra Reader captures and persists raw request/response headers (and optionally JSON bodies, bounded by size limits) into the cached `siteProfile`.
 
 ### `crawl(options)`
 
 ```typescript
 const result = await reader.crawl({
-  url: 'https://example.com',
-  depth: 2,                          // Max crawl depth
-  maxPages: 50,                      // Max pages to discover
-  scrape: true,                      // Scrape content of discovered pages
-  formats: ['markdown', 'html'],
-  scrapeConcurrency: 3,              // Parallel scraping
-  delayMs: 1000,                     // Delay between requests
-  includePatterns: ['blog/*'],       // URL patterns to include (regex)
-  excludePatterns: ['admin/*'],      // URL patterns to exclude (regex)
+  url: "https://example.com",
+  depth: 2, // Max crawl depth
+  maxPages: 50, // Max pages to discover
+  scrape: true, // Scrape content of discovered pages
+  formats: ["markdown", "html"],
+  scrapeConcurrency: 3, // Parallel scraping
+  delayMs: 1000, // Delay between requests
+  includePatterns: ["blog/*"], // URL patterns to include (regex)
+  excludePatterns: ["admin/*"], // URL patterns to exclude (regex)
 });
 
 console.log(`Discovered ${result.urls.length} URLs`);
@@ -215,26 +247,26 @@ interface CrawlResult {
 
 ```typescript
 interface ProxyConfig {
-  url?: string;                       // Full proxy URL (takes precedence)
-  type?: 'datacenter' | 'residential';
+  url?: string; // Full proxy URL (takes precedence)
+  type?: "datacenter" | "residential";
   host?: string;
   port?: number;
   username?: string;
   password?: string;
-  country?: string;                   // For residential proxies ('us', 'uk', etc.)
+  country?: string; // For residential proxies ('us', 'uk', etc.)
 }
 ```
 
 ### Browser Pool (Direct Access)
 
 ```typescript
-import { BrowserPool } from '@vakra-dev/reader';
+import { BrowserPool } from "@vakra-dev/reader";
 
 const pool = new BrowserPool({ size: 5 });
 await pool.initialize();
 
 const title = await pool.withBrowser(async (hero) => {
-  await hero.goto('https://example.com');
+  await hero.goto("https://example.com");
   return await hero.document.title;
 });
 
@@ -247,7 +279,7 @@ await pool.shutdown();
 ### Cloudflare Challenge Detection
 
 ```typescript
-import { detectChallenge, waitForChallengeResolution } from '@vakra-dev/reader';
+import { detectChallenge, waitForChallengeResolution } from "@vakra-dev/reader";
 
 const detection = await detectChallenge(hero);
 if (detection.isChallenge) {
@@ -268,10 +300,10 @@ if (detection.isChallenge) {
 For production servers, share a single Hero Core across all requests:
 
 ```typescript
-import HeroCore from '@ulixee/hero-core';
-import { TransportBridge } from '@ulixee/net';
-import { ConnectionToHeroCore } from '@ulixee/hero';
-import { scrape } from '@vakra-dev/reader';
+import HeroCore from "@ulixee/hero-core";
+import { TransportBridge } from "@ulixee/net";
+import { ConnectionToHeroCore } from "@ulixee/hero";
+import { scrape } from "@vakra-dev/reader";
 
 const heroCore = new HeroCore();
 await heroCore.start();
@@ -283,7 +315,7 @@ function createConnection() {
 }
 
 const result = await scrape({
-  urls: ['https://example.com'],
+  urls: ["https://example.com"],
   connectionToCore: createConnection(),
 });
 
@@ -312,20 +344,20 @@ npx reader scrape https://example.com https://example.org -c 2
 npx reader scrape https://example.com -o output.md
 ```
 
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
+| Option                   | Type   | Default      | Description                      |
+| ------------------------ | ------ | ------------ | -------------------------------- |
 | `-f, --format <formats>` | string | `"markdown"` | Output formats (comma-separated) |
-| `-o, --output <file>` | string | stdout | Output file path |
-| `-c, --concurrency <n>` | number | `1` | Parallel requests |
-| `-t, --timeout <ms>` | number | `30000` | Request timeout |
-| `--batch-timeout <ms>` | number | `300000` | Total batch timeout |
-| `--proxy <url>` | string | - | Proxy URL |
-| `--user-agent <string>` | string | - | Custom user agent |
-| `--show-chrome` | flag | - | Show browser window |
-| `--no-main-content` | flag | - | Disable main content extraction |
-| `--include-tags <sel>` | string | - | CSS selectors to include |
-| `--exclude-tags <sel>` | string | - | CSS selectors to exclude |
-| `-v, --verbose` | flag | - | Verbose logging |
+| `-o, --output <file>`    | string | stdout       | Output file path                 |
+| `-c, --concurrency <n>`  | number | `1`          | Parallel requests                |
+| `-t, --timeout <ms>`     | number | `30000`      | Request timeout                  |
+| `--batch-timeout <ms>`   | number | `300000`     | Total batch timeout              |
+| `--proxy <url>`          | string | -            | Proxy URL                        |
+| `--user-agent <string>`  | string | -            | Custom user agent                |
+| `--show-chrome`          | flag   | -            | Show browser window              |
+| `--no-main-content`      | flag   | -            | Disable main content extraction  |
+| `--include-tags <sel>`   | string | -            | CSS selectors to include         |
+| `--exclude-tags <sel>`   | string | -            | CSS selectors to exclude         |
+| `-v, --verbose`          | flag   | -            | Verbose logging                  |
 
 ### `reader crawl <url>`
 
@@ -336,21 +368,21 @@ npx reader crawl https://example.com -d 2 --scrape
 npx reader crawl https://example.com --include "blog/*" --exclude "admin/*"
 ```
 
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `-d, --depth <n>` | number | `1` | Maximum crawl depth |
-| `-m, --max-pages <n>` | number | `20` | Maximum pages to discover |
-| `-s, --scrape` | flag | - | Scrape content of discovered pages |
-| `-f, --format <formats>` | string | `"markdown"` | Output formats |
-| `-o, --output <file>` | string | stdout | Output file path |
-| `--delay <ms>` | number | `1000` | Delay between requests |
-| `-t, --timeout <ms>` | number | - | Total crawl timeout |
-| `--include <patterns>` | string | - | URL patterns to include |
-| `--exclude <patterns>` | string | - | URL patterns to exclude |
-| `--proxy <url>` | string | - | Proxy URL |
-| `--user-agent <string>` | string | - | Custom user agent |
-| `--show-chrome` | flag | - | Show browser window |
-| `-v, --verbose` | flag | - | Verbose logging |
+| Option                   | Type   | Default      | Description                        |
+| ------------------------ | ------ | ------------ | ---------------------------------- |
+| `-d, --depth <n>`        | number | `1`          | Maximum crawl depth                |
+| `-m, --max-pages <n>`    | number | `20`         | Maximum pages to discover          |
+| `-s, --scrape`           | flag   | -            | Scrape content of discovered pages |
+| `-f, --format <formats>` | string | `"markdown"` | Output formats                     |
+| `-o, --output <file>`    | string | stdout       | Output file path                   |
+| `--delay <ms>`           | number | `1000`       | Delay between requests             |
+| `-t, --timeout <ms>`     | number | -            | Total crawl timeout                |
+| `--include <patterns>`   | string | -            | URL patterns to include            |
+| `--exclude <patterns>`   | string | -            | URL patterns to exclude            |
+| `--proxy <url>`          | string | -            | Proxy URL                          |
+| `--user-agent <string>`  | string | -            | Custom user agent                  |
+| `--show-chrome`          | flag   | -            | Show browser window                |
+| `-v, --verbose`          | flag   | -            | Verbose logging                    |
 
 ## Anti-Bot Evasion
 
@@ -358,35 +390,35 @@ Ultra Reader implements a layered defense against 44 known anti-bot mechanisms. 
 
 ### Implemented
 
-| Mechanism | How |
-| --- | --- |
-| **robots.txt** | Full parser with wildcards, `$` anchors. `respectRobots: false` to bypass |
-| **IP rate limiting** | Configurable delay, jitter (uniform/gaussian/exponential), backoff |
-| **IP reputation** | Datacenter + residential proxies, round-robin/random rotation |
-| **Geo-blocking** | Residential proxies with `country` param |
-| **TLS fingerprinting** | Hero emulates Chrome TLS; `got-scraping` emulates browser TLS |
-| **TCP fingerprinting** | Hero uses real Chromium TCP stack |
-| **DNS leak detection** | DNS over TLS via Cloudflare (1.1.1.1) |
-| **User-Agent filtering** | 18 modern UAs, 3 rotation strategies, domain-sticky, client hints |
-| **Header consistency** | Full Sec-Fetch-* headers, Sec-CH-UA client hints |
-| **Referer validation** | Auto-generated Google/Bing search referers |
-| **Cloudflare JS Challenge** | Multi-signal DOM + text detection, polling resolution |
-| **Cloudflare Turnstile** | Managed mode auto-resolved via Hero |
-| **Browser fingerprinting** | Hero emulates Canvas, WebGL, Audio, Navigator, WebRTC |
-| **Timing attacks** | Jitter with 3 distributions, configurable min/max |
+| Mechanism                   | How                                                                       |
+| --------------------------- | ------------------------------------------------------------------------- |
+| **robots.txt**              | Full parser with wildcards, `$` anchors. `respectRobots: false` to bypass |
+| **IP rate limiting**        | Configurable delay, jitter (uniform/gaussian/exponential), backoff        |
+| **IP reputation**           | Datacenter + residential proxies, round-robin/random rotation             |
+| **Geo-blocking**            | Residential proxies with `country` param                                  |
+| **TLS fingerprinting**      | Hero emulates Chrome TLS; `got-scraping` emulates browser TLS             |
+| **TCP fingerprinting**      | Hero uses real Chromium TCP stack                                         |
+| **DNS leak detection**      | DNS over TLS via Cloudflare (1.1.1.1)                                     |
+| **User-Agent filtering**    | 18 modern UAs, 3 rotation strategies, domain-sticky, client hints         |
+| **Header consistency**      | Full Sec-Fetch-\* headers, Sec-CH-UA client hints                         |
+| **Referer validation**      | Auto-generated Google/Bing search referers                                |
+| **Cloudflare JS Challenge** | Multi-signal DOM + text detection, polling resolution                     |
+| **Cloudflare Turnstile**    | Managed mode auto-resolved via Hero                                       |
+| **Browser fingerprinting**  | Hero emulates Canvas, WebGL, Audio, Navigator, WebRTC                     |
+| **Timing attacks**          | Jitter with 3 distributions, configurable min/max                         |
 
 ### Planned (Phases 2-8)
 
-| Phase | Scope |
-| --- | --- |
-| **1.5** | API Discovery — sitemap, Swagger/OpenAPI, endpoint mapping, circuit breaker, adaptive engines |
-| **2** | CAPTCHA solving (2Captcha, Anti-Captcha, CapSolver), behavioral simulation, honeypot detection |
-| **3** | WAF detection framework, header order fingerprinting, request chain mimicry, browser profiles |
-| **4** | Enterprise WAFs — Akamai Bot Manager, PerimeterX/HUMAN, DataDome, Kasada |
-| **5** | Content integrity — agent poisoning detection, shadow DOM, soft-block detection |
-| **6** | Meta robots, rate limit headers, DNS strategies, TLS fingerprint rotation |
-| **7** | JWT/OAuth extraction, token discovery, user config system, CLI auth commands |
-| **8** | LLM-assisted bypass — JS deobfuscation, signing extraction |
+| Phase   | Scope                                                                                          |
+| ------- | ---------------------------------------------------------------------------------------------- |
+| **1.5** | API Discovery — sitemap, Swagger/OpenAPI, endpoint mapping, circuit breaker, adaptive engines  |
+| **2**   | CAPTCHA solving (2Captcha, Anti-Captcha, CapSolver), behavioral simulation, honeypot detection |
+| **3**   | WAF detection framework, header order fingerprinting, request chain mimicry, browser profiles  |
+| **4**   | Enterprise WAFs — Akamai Bot Manager, PerimeterX/HUMAN, DataDome, Kasada                       |
+| **5**   | Content integrity — agent poisoning detection, shadow DOM, soft-block detection                |
+| **6**   | Meta robots, rate limit headers, DNS strategies, TLS fingerprint rotation                      |
+| **7**   | JWT/OAuth extraction, token discovery, user config system, CLI auth commands                   |
+| **8**   | LLM-assisted bypass — JS deobfuscation, signing extraction                                     |
 
 **Current anti-bot score: 5.5/10** — strong infrastructure, growing evasion capabilities.
 
@@ -394,10 +426,10 @@ Ultra Reader implements a layered defense against 44 known anti-bot mechanisms. 
 
 Most websites expose more data through APIs than rendered HTML. Ultra Reader's API Discovery automatically maps a target's internal API surface.
 
-| Approach | Speed | Data Quality | Anti-Bot Risk | Coverage |
-| --- | --- | --- | --- | --- |
-| HTML scraping | Slow | Lossy | High | What you see |
-| **API scraping** | **10-100x faster** | **Structured JSON** | **Low** | **Everything the app knows** |
+| Approach         | Speed              | Data Quality        | Anti-Bot Risk | Coverage                     |
+| ---------------- | ------------------ | ------------------- | ------------- | ---------------------------- |
+| HTML scraping    | Slow               | Lossy               | High          | What you see                 |
+| **API scraping** | **10-100x faster** | **Structured JSON** | **Low**       | **Everything the app knows** |
 
 ### What Gets Discovered
 
