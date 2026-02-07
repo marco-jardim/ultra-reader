@@ -218,7 +218,7 @@ describe("TlsClientEngine", () => {
     });
 
     it("omits Referer when spoofReferer is false", async () => {
-      mockGenerateReferer.mockReturnValue(undefined);
+      mockGenerateReferer.mockReturnValue("");
       mockGotScraping.mockResolvedValue(mockGotResponse(VALID_HTML));
 
       await tlsClientEngine.scrape(

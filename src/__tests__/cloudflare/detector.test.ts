@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { detectChallenge, isChallengePage } from "../../cloudflare/detector.js";
 import type { ChallengeDetection } from "../../cloudflare/types.js";
 

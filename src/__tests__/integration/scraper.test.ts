@@ -51,7 +51,6 @@ vi.mock("../../engines/index.js", () => {
 });
 
 import { Scraper, scrape } from "../../scraper.js";
-import type { ScrapeResult } from "../../types.js";
 
 // ---------------------------------------------------------------------------
 // Mock global.fetch for robots.txt

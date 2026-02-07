@@ -206,7 +206,7 @@ describe("HttpEngine", () => {
     });
 
     it("omits Referer when spoofReferer is false", async () => {
-      mockGenerateReferer.mockReturnValue(undefined);
+      mockGenerateReferer.mockReturnValue("");
       fetchSpy.mockResolvedValue(mockFetchResponse(VALID_HTML));
 
       await httpEngine.scrape(

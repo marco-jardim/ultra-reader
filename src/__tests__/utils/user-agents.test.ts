@@ -1,10 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   UserAgentRotator,
   generateReferer,
   getDefaultRotator,
   getRandomUserAgent,
-  type UaRotationStrategy,
 } from "../../utils/user-agents.js";
 
 // ---------------------------------------------------------------------------

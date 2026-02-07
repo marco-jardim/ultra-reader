@@ -22,11 +22,6 @@ const mockDetectChallenge = vi.mocked(detectChallenge);
 // Hero mock factory
 // ---------------------------------------------------------------------------
 
-interface MockHeroUrlSequence {
-  /** Sequence of URLs returned by successive `hero.url` reads */
-  urls: string[];
-}
-
 function createMockHero(
   opts: {
     urlSequence?: string[];

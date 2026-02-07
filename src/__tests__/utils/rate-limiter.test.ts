@@ -66,7 +66,7 @@ describe("rateLimit", () => {
 
   it("resolves after the specified delay (no jitter)", async () => {
     let resolved = false;
-    const p = rateLimit(500).then(() => {
+    void rateLimit(500).then(() => {
       resolved = true;
     });
 
@@ -91,7 +91,7 @@ describe("rateLimit", () => {
     // Force Math.random to return 0.5 → jitteredDelay gives min + 0.5*(max-min)
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     let resolved = false;
-    const p = rateLimit(100, 0.5).then(() => {
+    void rateLimit(100, 0.5).then(() => {
       resolved = true;
     });
 
