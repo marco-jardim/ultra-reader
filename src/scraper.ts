@@ -4,6 +4,7 @@ import { cleanContent } from "./utils/content-cleaner";
 import { extractMetadata } from "./utils/metadata-extractor";
 import { createLogger } from "./utils/logger";
 import { fetchRobotsTxt, isUrlAllowed, type RobotsRules } from "./utils/robots-parser";
+import { jitteredDelay } from "./utils/rate-limiter";
 import {
   DEFAULT_OPTIONS,
   type ScrapeOptions,
@@ -247,8 +248,11 @@ export class Scraper {
         lastError = error.message;
         if (attempt < maxRetries) {
           // Exponential backoff: 1s, 2s, 4s...
-          const delay = Math.pow(2, attempt) * 1000;
-          this.logger.warn(`Retry ${attempt + 1}/${maxRetries} for ${url} in ${delay}ms`);
+          const baseDelay = Math.pow(2, attempt) * 1000;
+          const delay = Math.round(jitteredDelay(baseDelay, 0.5));
+          this.logger.warn(
+            `Retry ${attempt + 1}/${maxRetries} for ${url} in ${delay}ms (base ${baseDelay}ms)`
+          );
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }

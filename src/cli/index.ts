@@ -183,6 +183,7 @@ program
   .option("-t, --timeout <ms>", "Request timeout in milliseconds", "30000")
   .option("--proxy <url>", "Proxy URL (e.g., http://user:pass@host:port)")
   .option("--user-agent <string>", "Custom user agent string")
+  .option("--ignore-robots", "Ignore robots.txt restrictions")
   .option("--batch-timeout <ms>", "Total timeout for entire batch operation", "300000")
   .option("--show-chrome", "Show browser window for debugging")
   .option("--standalone", "Force standalone mode (bypass daemon)")
@@ -259,6 +260,7 @@ program
         batchTimeoutMs: parseInt(options.batchTimeout, 10),
         proxy: options.proxy ? { url: options.proxy } : undefined,
         userAgent: options.userAgent,
+        respectRobots: options.ignoreRobots ? false : undefined,
         verbose: options.verbose || false,
         showChrome: options.showChrome || false,
         // Content cleaning options
@@ -346,6 +348,7 @@ program
   .option("--exclude <patterns>", "URL patterns to exclude (comma-separated regex)")
   .option("--proxy <url>", "Proxy URL (e.g., http://user:pass@host:port)")
   .option("--user-agent <string>", "Custom user agent string")
+  .option("--ignore-robots", "Ignore robots.txt restrictions")
   .option("--show-chrome", "Show browser window for debugging")
   .option("--standalone", "Force standalone mode (bypass daemon)")
   .option(
@@ -396,6 +399,7 @@ program
         maxPages: parseInt(options.maxPages, 10),
         scrape: options.scrape || false,
         delayMs: parseInt(options.delay, 10),
+        respectRobots: options.ignoreRobots ? false : undefined,
         timeoutMs: options.timeout ? parseInt(options.timeout, 10) : undefined,
         includePatterns,
         excludePatterns,

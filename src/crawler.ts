@@ -81,6 +81,7 @@ export class Crawler {
       maxPages: options.maxPages || 20,
       scrape: options.scrape || false,
       delayMs: options.delayMs || 1000,
+      respectRobots: options.respectRobots ?? true,
       timeoutMs: options.timeoutMs,
       includePatterns: options.includePatterns,
       excludePatterns: options.excludePatterns,
@@ -103,10 +104,17 @@ export class Crawler {
   async crawl(): Promise<CrawlResult> {
     const startTime = Date.now();
 
-    // Fetch robots.txt rules before crawling
-    this.robotsRules = await fetchRobotsTxt(this.options.url);
-    if (this.robotsRules) {
-      this.logger.info("Loaded robots.txt rules");
+    // Fetch robots.txt rules before crawling (unless disabled)
+    if (this.options.respectRobots !== false) {
+      this.robotsRules = await fetchRobotsTxt(this.options.url);
+      if (this.robotsRules) {
+        this.logger.info("Loaded robots.txt rules");
+      }
+    } else {
+      this.robotsRules = null;
+      if (this.options.verbose) {
+        this.logger.info("Skipping robots.txt checks (respectRobots=false)");
+      }
     }
 
     // Pool is managed by ReaderClient - just use it
@@ -148,7 +156,7 @@ export class Crawler {
 
       // Rate limit (use robots.txt crawl-delay if specified, otherwise use configured delay)
       const delay = this.robotsRules?.crawlDelay || this.options.delayMs;
-      await rateLimit(delay);
+      await rateLimit(delay, 0.3);
     }
 
     // Build metadata
@@ -320,6 +328,7 @@ export class Crawler {
       batchConcurrency: this.options.scrapeConcurrency,
       proxy: this.options.proxy,
       userAgent: this.options.userAgent,
+      respectRobots: this.options.respectRobots,
       verbose: this.options.verbose,
       showChrome: this.options.showChrome,
       pool: this.pool,

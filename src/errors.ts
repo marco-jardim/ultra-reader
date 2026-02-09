@@ -237,7 +237,7 @@ export class InvalidUrlError extends ReaderError {
 export class RobotsBlockedError extends ReaderError {
   constructor(url: string) {
     super(
-      `URL blocked by robots.txt: ${url}. Set respectRobotsTxt: false to override.`,
+      `URL blocked by robots.txt: ${url}. Set respectRobots: false to override.`,
       ReaderErrorCode.ROBOTS_BLOCKED,
       {
         url,

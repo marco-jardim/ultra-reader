@@ -20,6 +20,9 @@ export interface CrawlOptions {
   /** Delay between requests in milliseconds (default: 1000) */
   delayMs?: number;
 
+  /** Respect robots.txt rules (default: true). Set to false to ignore robots.txt. */
+  respectRobots?: boolean;
+
   /** Total timeout for the entire crawl operation in milliseconds */
   timeoutMs?: number;
 
