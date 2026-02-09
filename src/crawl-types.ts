@@ -23,6 +23,9 @@ export interface CrawlOptions {
   /** Respect robots.txt rules (default: true). Set to false to ignore robots.txt. */
   respectRobots?: boolean;
 
+  /** Avoid likely honeypot/trap links during discovery (default: true). */
+  avoidHoneypotLinks?: boolean;
+
   /** Total timeout for the entire crawl operation in milliseconds */
   timeoutMs?: number;
 

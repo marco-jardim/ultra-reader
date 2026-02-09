@@ -11,6 +11,7 @@ import {
   isContentUrl,
   shouldIncludeUrl,
 } from "./utils/url-helpers";
+import { isLikelyHoneypotLink } from "./utils/honeypot-detector";
 import { fetchRobotsTxt, isUrlAllowed, type RobotsRules } from "./utils/robots-parser";
 import { rateLimit } from "./utils/rate-limiter";
 import { createLogger } from "./utils/logger";
@@ -82,6 +83,7 @@ export class Crawler {
       scrape: options.scrape || false,
       delayMs: options.delayMs || 1000,
       respectRobots: options.respectRobots ?? true,
+      avoidHoneypotLinks: options.avoidHoneypotLinks ?? true,
       timeoutMs: options.timeoutMs,
       includePatterns: options.includePatterns,
       excludePatterns: options.excludePatterns,
@@ -303,6 +305,20 @@ export class Crawler {
 
       // Check if allowed by robots.txt
       if (!isUrlAllowed(resolved, this.robotsRules)) return;
+
+      // Honeypot/trap detection (conservative; only blocks high-confidence)
+      if (this.options.avoidHoneypotLinks !== false) {
+        if (
+          isLikelyHoneypotLink({
+            href,
+            resolvedUrl: resolved,
+            anchor,
+            baseUrl: this.options.url,
+          })
+        ) {
+          return;
+        }
+      }
 
       // Check if already visited or queued
       const urlKey = getUrlKey(resolved);
