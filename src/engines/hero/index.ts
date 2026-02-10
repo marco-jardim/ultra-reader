@@ -17,9 +17,11 @@ import {
 } from "../errors.js";
 import { ENGINE_CONFIGS } from "../types.js";
 import { detectChallenge } from "../../cloudflare/detector.js";
-import { waitForChallengeResolution } from "../../cloudflare/handler.js";
+import { handleChallenge } from "../../cloudflare/handler.js";
 import type { IBrowserPool } from "../../browser/types.js";
 import { setupApiInterceptor } from "../../discovery/api-interceptor.js";
+import { simulateBehavior } from "../../utils/behavior-simulator.js";
+import { scrollToBottom, waitForNetworkIdle } from "../../utils/page-interaction.js";
 
 /**
  * Minimum content length threshold
@@ -31,6 +33,77 @@ const MIN_CONTENT_LENGTH = 100;
  */
 export class HeroEngine implements Engine {
   readonly config: EngineConfig = ENGINE_CONFIGS.hero;
+
+  private async runBehaviorSimulation(
+    hero: Hero,
+    options: EngineMeta["options"],
+    logger?: EngineMeta["logger"]
+  ) {
+    if (options.behaviorSimulation !== true) return;
+
+    type EvaluateCapableTab = {
+      evaluate<T>(fn: (...args: any[]) => T, ...args: any[]): Promise<Awaited<T>>;
+      waitForTimeout?: (ms: number) => Promise<void>;
+    };
+
+    try {
+      const maybeTab: unknown = await hero.activeTab;
+      const tab =
+        maybeTab &&
+        typeof maybeTab === "object" &&
+        "evaluate" in maybeTab &&
+        typeof (maybeTab as { evaluate?: unknown }).evaluate === "function"
+          ? (maybeTab as EvaluateCapableTab)
+          : null;
+
+      if (!tab) return;
+
+      await simulateBehavior(tab);
+      logger?.debug(`[hero] Behavior simulation completed`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger?.debug(`[hero] Behavior simulation failed (ignored): ${msg}`);
+    }
+  }
+
+  private async runPageInteraction(
+    hero: Hero,
+    options: EngineMeta["options"],
+    logger?: EngineMeta["logger"]
+  ) {
+    if (options.pageInteraction !== true) return;
+
+    type EvaluateCapableTab = {
+      evaluate<T>(fn: (...args: any[]) => T, ...args: any[]): Promise<Awaited<T>>;
+      waitForTimeout?: (ms: number) => Promise<void>;
+    };
+
+    try {
+      const maybeTab: unknown = await hero.activeTab;
+      const tab =
+        maybeTab &&
+        typeof maybeTab === "object" &&
+        "evaluate" in maybeTab &&
+        typeof (maybeTab as { evaluate?: unknown }).evaluate === "function"
+          ? (maybeTab as EvaluateCapableTab)
+          : null;
+
+      if (!tab) return;
+
+      // Gentle defaults: wait briefly for network idle, then do a short scroll pass.
+      await waitForNetworkIdle(tab, { idleTimeMs: 500, timeoutMs: 10_000, pollIntervalMs: 100 });
+      await scrollToBottom(tab, {
+        maxIterations: 6,
+        scrollDelayMs: 600,
+        stableIterations: 2,
+        timeoutMs: 15_000,
+      });
+      logger?.debug(`[hero] Page interaction completed`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger?.debug(`[hero] Page interaction failed (ignored): ${msg}`);
+    }
+  }
 
   async scrape(meta: EngineMeta): Promise<EngineResult> {
     const startTime = Date.now();
@@ -93,8 +166,14 @@ export class HeroEngine implements Engine {
             throw new EngineTimeoutError("hero", Date.now() - startTime);
           }
 
+          // Optional behavior simulation (best-effort)
+          await this.runBehaviorSimulation(hero, options, logger);
+
+          if (aborted) {
+            throw new EngineTimeoutError("hero", Date.now() - startTime);
+          }
+
           // Detect and handle Cloudflare challenge
-          const initialUrl = await hero.url;
           const detection = await detectChallenge(hero);
 
           if (detection.isChallenge) {
@@ -105,12 +184,13 @@ export class HeroEngine implements Engine {
               throw new ChallengeDetectedError("hero", "blocked");
             }
 
-            // Wait for resolution
-            const resolution = await waitForChallengeResolution(hero, {
+            // Resolve (passively or via CAPTCHA if configured)
+            const resolution = await handleChallenge(hero, {
               maxWaitMs: 45000,
               pollIntervalMs: 500,
               verbose: options.verbose,
-              initialUrl,
+              captcha: options.captcha,
+              captchaFallback: options.captchaFallback,
             });
 
             if (!resolution.resolved) {
@@ -128,6 +208,13 @@ export class HeroEngine implements Engine {
 
           // Wait for final page to stabilize (handles Cloudflare silent redirects)
           await this.waitForFinalPage(hero, url, logger);
+
+          if (aborted) {
+            throw new EngineTimeoutError("hero", Date.now() - startTime);
+          }
+
+          // Optional dynamic interaction (best-effort)
+          await this.runPageInteraction(hero, options, logger);
 
           if (aborted) {
             throw new EngineTimeoutError("hero", Date.now() - startTime);

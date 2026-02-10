@@ -1,6 +1,7 @@
 import type { IBrowserPool } from "./browser/types";
 import type { EngineName } from "./engines/types.js";
 import type { DiscoveryOptions, SiteProfile } from "./discovery/site-profile.js";
+import type { CaptchaSolverConfig } from "./captcha/types.js";
 
 /**
  * Proxy configuration for Hero
@@ -135,6 +136,29 @@ export interface ScrapeOptions {
 
   /** Browser pool instance (internal, provided by ReaderClient) */
   pool?: IBrowserPool;
+
+  // ============================================================================
+  // CAPTCHA options
+  // ============================================================================
+
+  /** CAPTCHA solver configuration (Turnstile/reCAPTCHA). If omitted, CAPTCHA solve is disabled. */
+  captcha?: CaptchaSolverConfig;
+
+  /** Optional secondary CAPTCHA solver configuration used if the primary config fails. */
+  captchaFallback?: CaptchaSolverConfig;
+
+  // ============================================================================
+  // Behavior simulation & dynamic interaction
+  // ============================================================================
+
+  /** Simulate light human-ish behavior (mouse moves/scroll/pause). Default: false */
+  behaviorSimulation?: boolean;
+
+  /** Run dynamic page interaction helpers (network idle wait + optional scroll). Default: false */
+  pageInteraction?: boolean;
+
+  /** Rotate browser fingerprint between requests (wiring flag; may be a no-op depending on pool config). */
+  rotateFingerprint?: boolean;
 
   // ============================================================================
   // Engine options
@@ -371,6 +395,8 @@ export const DEFAULT_OPTIONS: Omit<
   | "forceEngine"
   | "uaRotation"
   | "stickyUaPerDomain"
+  | "captcha"
+  | "captchaFallback"
 > & {
   proxy?: ProxyConfig;
   waitForSelector?: string;
@@ -384,6 +410,8 @@ export const DEFAULT_OPTIONS: Omit<
   forceEngine?: EngineName;
   uaRotation?: "random" | "weighted" | "round-robin" | "per-domain";
   stickyUaPerDomain?: boolean;
+  captcha?: CaptchaSolverConfig;
+  captchaFallback?: CaptchaSolverConfig;
 } = {
   urls: [],
   formats: ["markdown"],
@@ -405,6 +433,10 @@ export const DEFAULT_OPTIONS: Omit<
   // Hero-specific defaults
   verbose: false,
   showChrome: false,
+  // CAPTCHA defaults (disabled unless configured)
+  behaviorSimulation: false,
+  pageInteraction: false,
+  rotateFingerprint: false,
   // Anti-detection defaults
   respectRobots: true,
   spoofReferer: true,
