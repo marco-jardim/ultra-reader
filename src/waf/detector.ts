@@ -53,6 +53,14 @@ function classifyCategory(statusCode?: number, htmlLower?: string): WafCategory 
   return "challenge";
 }
 
+function shouldReturnDetection(infraSignals: string[], actionSignals: string[]): boolean {
+  // Avoid infra-only false positives: only return when a challenge/block/captcha/rate-limit is likely.
+  if (actionSignals.length === 0) return false;
+  // If we have no infra signals, require stronger action evidence.
+  if (infraSignals.length === 0) return actionSignals.length >= 2;
+  return true;
+}
+
 function build(
   provider: WafProvider,
   category: WafCategory,
@@ -74,89 +82,113 @@ export function detectWaf(input: WafDetectInput): WafDetection | null {
 
   // Cloudflare
   {
-    const signals: string[] = [];
-    if (hasHeader(headers, "cf-ray")) signals.push("hdr:cf-ray");
-    if (headerIncludes(headers, "server", "cloudflare")) signals.push("hdr:server=cloudflare");
-    if (headerIncludes(headers, "set-cookie", "__cf_bm")) signals.push("cookie:__cf_bm");
-    if (headerIncludes(headers, "set-cookie", "cf_clearance")) signals.push("cookie:cf_clearance");
-    if (htmlLower.includes("/cdn-cgi/")) signals.push("html:/cdn-cgi/");
-    if (htmlLower.includes("challenge-platform")) signals.push("html:challenge-platform");
-    if (htmlLower.includes("just a moment")) signals.push("html:just-a-moment");
-    if (htmlLower.includes("performance & security by cloudflare")) signals.push("html:cf-footer");
+    const infraSignals: string[] = [];
+    const actionSignals: string[] = [];
+    if (hasHeader(headers, "cf-ray")) infraSignals.push("hdr:cf-ray");
+    if (headerIncludes(headers, "server", "cloudflare")) infraSignals.push("hdr:server=cloudflare");
+    if (headerIncludes(headers, "set-cookie", "__cf_bm")) infraSignals.push("cookie:__cf_bm");
+    if (headerIncludes(headers, "set-cookie", "cf_clearance"))
+      infraSignals.push("cookie:cf_clearance");
+    if (hasHeader(headers, "cf-mitigated")) actionSignals.push("hdr:cf-mitigated");
 
-    if (signals.length >= 2) {
+    // Challenge pages: prefer specific Cloudflare challenge paths/strings.
+    if (htmlLower.includes("/cdn-cgi/challenge-platform/"))
+      actionSignals.push("html:cf-challenge-platform");
+    if (htmlLower.includes("just a moment")) actionSignals.push("html:just-a-moment");
+    if (htmlLower.includes("checking your browser"))
+      actionSignals.push("html:checking-your-browser");
+    if ((statusCode ?? 0) >= 400 && htmlLower.includes("ray id")) actionSignals.push("html:ray-id");
+    if (includesAny(htmlLower, ["error 1015", "you are being rate limited"]))
+      actionSignals.push("html:rate-limited");
+
+    const signals = [...infraSignals, ...actionSignals];
+    if (shouldReturnDetection(infraSignals, actionSignals)) {
       return build("cloudflare", classifyCategory(statusCode, htmlLower), 0.9, signals);
     }
   }
 
   // Akamai (Bot Manager)
   {
-    const signals: string[] = [];
-    if (headerIncludes(headers, "server", "akamai")) signals.push("hdr:server=akamai");
-    if (headerIncludes(headers, "server", "akamaighost")) signals.push("hdr:server=AkamaiGHost");
-    if (headerIncludes(headers, "set-cookie", "ak_bmsc")) signals.push("cookie:ak_bmsc");
-    if (headerIncludes(headers, "set-cookie", "bm_sz")) signals.push("cookie:bm_sz");
-    if (includesAny(htmlLower, ["akamaighost", "reference #", "access denied"]))
-      signals.push("html:akamai-marker");
+    const infraSignals: string[] = [];
+    const actionSignals: string[] = [];
+    if (headerIncludes(headers, "server", "akamai")) infraSignals.push("hdr:server=akamai");
+    if (headerIncludes(headers, "server", "akamaighost"))
+      infraSignals.push("hdr:server=AkamaiGHost");
+    if (headerIncludes(headers, "set-cookie", "ak_bmsc")) infraSignals.push("cookie:ak_bmsc");
+    if (headerIncludes(headers, "set-cookie", "bm_sz")) infraSignals.push("cookie:bm_sz");
+    if (includesAny(htmlLower, ["reference #", "akamaighost"]))
+      actionSignals.push("html:akamai-marker");
+    if (htmlLower.includes("access denied") && infraSignals.length > 0)
+      actionSignals.push("html:access-denied");
 
-    if (signals.length >= 2) {
+    const signals = [...infraSignals, ...actionSignals];
+    if (shouldReturnDetection(infraSignals, actionSignals)) {
       return build("akamai", classifyCategory(statusCode, htmlLower), 0.8, signals);
     }
   }
 
   // DataDome
   {
-    const signals: string[] = [];
-    if (headerIncludes(headers, "set-cookie", "datadome")) signals.push("cookie:datadome");
-    if (hasHeader(headers, "x-datadome")) signals.push("hdr:x-datadome");
-    if (includesAny(htmlLower, ["datadome", "ddos protection by datadome"]))
-      signals.push("html:datadome");
+    const infraSignals: string[] = [];
+    const actionSignals: string[] = [];
+    if (headerIncludes(headers, "set-cookie", "datadome")) infraSignals.push("cookie:datadome");
+    if (hasHeader(headers, "x-datadome")) infraSignals.push("hdr:x-datadome");
+    if (includesAny(htmlLower, ["ddos protection by datadome", "captcha-delivery.com"]))
+      actionSignals.push("html:datadome");
 
-    if (signals.length >= 2) {
+    const signals = [...infraSignals, ...actionSignals];
+    if (shouldReturnDetection(infraSignals, actionSignals)) {
       return build("datadome", classifyCategory(statusCode, htmlLower), 0.8, signals);
     }
   }
 
   // PerimeterX
   {
-    const signals: string[] = [];
-    if (headerIncludes(headers, "set-cookie", "_px3")) signals.push("cookie:_px3");
-    if (headerIncludes(headers, "set-cookie", "_pxhd")) signals.push("cookie:_pxhd");
-    if (hasHeader(headers, "x-px")) signals.push("hdr:x-px");
-    if (includesAny(htmlLower, ["perimeterx", "px-captcha", "_px"])) signals.push("html:px-marker");
+    const infraSignals: string[] = [];
+    const actionSignals: string[] = [];
+    if (headerIncludes(headers, "set-cookie", "_px3")) infraSignals.push("cookie:_px3");
+    if (headerIncludes(headers, "set-cookie", "_pxhd")) infraSignals.push("cookie:_pxhd");
+    if (hasHeader(headers, "x-px")) infraSignals.push("hdr:x-px");
+    if (includesAny(htmlLower, ["perimeterx", "px-captcha"])) actionSignals.push("html:px-marker");
 
-    if (signals.length >= 2) {
+    const signals = [...infraSignals, ...actionSignals];
+    if (shouldReturnDetection(infraSignals, actionSignals)) {
       return build("perimeterx", classifyCategory(statusCode, htmlLower), 0.8, signals);
     }
   }
 
   // Imperva / Incapsula
   {
-    const signals: string[] = [];
-    if (headerIncludes(headers, "set-cookie", "incap_ses")) signals.push("cookie:incap_ses");
-    if (headerIncludes(headers, "set-cookie", "visid_incap")) signals.push("cookie:visid_incap");
-    if (hasHeader(headers, "x-iinfo")) signals.push("hdr:x-iinfo");
-    if (headerIncludes(headers, "x-cdn", "incapsula")) signals.push("hdr:x-cdn=incapsula");
-    if (includesAny(htmlLower, ["incapsula", "incident id", "powered by incapsula"]))
-      signals.push("html:incapsula");
+    const infraSignals: string[] = [];
+    const actionSignals: string[] = [];
+    if (headerIncludes(headers, "set-cookie", "incap_ses")) infraSignals.push("cookie:incap_ses");
+    if (headerIncludes(headers, "set-cookie", "visid_incap"))
+      infraSignals.push("cookie:visid_incap");
+    if (hasHeader(headers, "x-iinfo")) infraSignals.push("hdr:x-iinfo");
+    if (headerIncludes(headers, "x-cdn", "incapsula")) infraSignals.push("hdr:x-cdn=incapsula");
+    if (includesAny(htmlLower, ["incident id", "powered by incapsula"]))
+      actionSignals.push("html:incapsula");
 
-    if (signals.length >= 2) {
+    const signals = [...infraSignals, ...actionSignals];
+    if (shouldReturnDetection(infraSignals, actionSignals)) {
       return build("imperva", classifyCategory(statusCode, htmlLower), 0.75, signals);
     }
   }
 
   // Sucuri
   {
-    const signals: string[] = [];
-    if (hasHeader(headers, "x-sucuri-id")) signals.push("hdr:x-sucuri-id");
-    if (headerIncludes(headers, "server", "sucuri")) signals.push("hdr:server=sucuri");
+    const infraSignals: string[] = [];
+    const actionSignals: string[] = [];
+    if (hasHeader(headers, "x-sucuri-id")) infraSignals.push("hdr:x-sucuri-id");
+    if (headerIncludes(headers, "server", "sucuri")) infraSignals.push("hdr:server=sucuri");
     if (
       includesAny(htmlLower, ["sucuri website firewall", "access denied - sucuri website firewall"])
     ) {
-      signals.push("html:sucuri");
+      actionSignals.push("html:sucuri");
     }
 
-    if (signals.length >= 2) {
+    const signals = [...infraSignals, ...actionSignals];
+    if (shouldReturnDetection(infraSignals, actionSignals)) {
       return build("sucuri", classifyCategory(statusCode, htmlLower), 0.75, signals);
     }
   }

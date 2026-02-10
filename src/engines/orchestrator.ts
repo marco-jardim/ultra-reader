@@ -253,17 +253,24 @@ export class EngineOrchestrator {
           }
 
           // Policy: if a WAF/challenge is detected and Hero is available, prioritize Hero next.
+          const isWafTagged = error.challengeType.startsWith("waf:");
+          const isWafRateLimit =
+            error.waf?.category === "rate_limit" ||
+            (isWafTagged && error.challengeType.split(":").slice(-1)[0] === "rate_limit");
+
           const shouldPreferHero =
-            // Non-Cloudflare WAFs are very likely browser-gated.
-            (Boolean(error.waf) && error.waf?.provider !== "cloudflare") ||
-            // Explicit WAF tagging from detection.
-            error.challengeType.startsWith("waf:") ||
             // Browser-required or interactive challenges.
             error.challengeType.includes("cloudflare-js") ||
             error.challengeType.includes("js-required") ||
             error.challengeType.includes("turnstile") ||
             error.challengeType.includes("captcha") ||
-            error.challengeType.includes("blocked");
+            error.challengeType.includes("blocked") ||
+            // WAF tagging from detection (except rate limit).
+            (!isWafRateLimit &&
+              // Non-Cloudflare WAFs are very likely browser-gated.
+              ((Boolean(error.waf) && error.waf?.provider !== "cloudflare") ||
+                // Explicit WAF tagging from detection.
+                isWafTagged));
 
           if (shouldPreferHero && engineName !== "hero") {
             const heroIndex = orderedEngineNames.indexOf("hero");
