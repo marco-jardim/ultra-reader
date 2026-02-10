@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Engine, EngineMeta, EngineResult, EngineName } from "../../engines/types.js";
 import { ENGINE_CONFIGS } from "../../engines/types.js";
+import { EngineAffinityCache } from "../../engines/engine-affinity.js";
+import { DomainCircuitBreaker } from "../../engines/circuit-breaker.js";
 import {
   EngineError,
   ChallengeDetectedError,
@@ -202,6 +204,93 @@ describe("EngineOrchestrator", () => {
       const allFailed = err as AllEnginesFailedError;
       expect(allFailed.attemptedEngines).toEqual(["http", "tlsclient", "hero"]);
       expect(allFailed.errors.size).toBe(3);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Engine affinity + domain circuit breaker
+  // -----------------------------------------------------------------------
+
+  describe("scrape – affinity + circuit breaker", () => {
+    it("uses EngineAffinityCache to prefer the historically successful engine for a domain", async () => {
+      const cache = new EngineAffinityCache({ now: () => 0, ttlMs: 60_000 });
+      const orch = new EngineOrchestrator({ affinityCache: cache });
+
+      // First scrape: hero succeeds after fallbacks; this should seed affinity history.
+      (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new ChallengeDetectedError("http", "cloudflare")
+      );
+      (mockTlsClientEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new ChallengeDetectedError("tlsclient", "cloudflare")
+      );
+      (mockHeroEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(successResult("hero"));
+
+      const r1 = await orch.scrape(defaultMeta({ url: "https://example.com" }));
+      expect(r1.attemptedEngines).toEqual(["http", "tlsclient", "hero"]);
+
+      // Second scrape: hero should now be tried first.
+      (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockReset();
+      (mockTlsClientEngine.scrape as ReturnType<typeof vi.fn>).mockReset();
+      (mockHeroEngine.scrape as ReturnType<typeof vi.fn>).mockReset();
+
+      (mockHeroEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(successResult("hero"));
+
+      const r2 = await orch.scrape(defaultMeta({ url: "https://example.com" }));
+      expect(r2.attemptedEngines).toEqual(["hero"]);
+      expect(mockHttpEngine.scrape).not.toHaveBeenCalled();
+      expect(mockTlsClientEngine.scrape).not.toHaveBeenCalled();
+
+      const snap = cache.getDomainSnapshot("example.com");
+      expect(snap).not.toBeNull();
+      expect(snap!.entries.hero?.successes).toBe(2);
+      expect(snap!.entries.hero?.avgResponseMs).not.toBeNull();
+    });
+
+    it("uses DomainCircuitBreaker to short-circuit attempts after threshold and blocks subsequent calls while open", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(0);
+
+      const cb = new DomainCircuitBreaker({
+        failureThreshold: 2,
+        cooldownMs: 60_000,
+        halfOpenMaxAttempts: 1,
+        resetOnSuccess: true,
+      });
+      const orch = new EngineOrchestrator({ circuitBreaker: cb });
+
+      (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new EngineError("http", "fail")
+      );
+      (mockTlsClientEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new EngineError("tlsclient", "fail")
+      );
+      (mockHeroEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new EngineError("hero", "fail")
+      );
+
+      // After 2 failures, the breaker should open and block trying the 3rd engine.
+      await expect(orch.scrape(defaultMeta({ url: "https://example.com" }))).rejects.toThrow(
+        AllEnginesFailedError
+      );
+      expect(mockHeroEngine.scrape).not.toHaveBeenCalled();
+      expect(cb.getState("example.com")).toBe("open");
+
+      // Subsequent call while still open should be blocked immediately (no engine calls).
+      (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockReset();
+      (mockTlsClientEngine.scrape as ReturnType<typeof vi.fn>).mockReset();
+      (mockHeroEngine.scrape as ReturnType<typeof vi.fn>).mockReset();
+
+      (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(successResult("http"));
+      (mockTlsClientEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(
+        successResult("tlsclient")
+      );
+      (mockHeroEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(successResult("hero"));
+
+      await expect(orch.scrape(defaultMeta({ url: "https://example.com" }))).rejects.toThrow(
+        AllEnginesFailedError
+      );
+      expect(mockHttpEngine.scrape).not.toHaveBeenCalled();
+      expect(mockTlsClientEngine.scrape).not.toHaveBeenCalled();
+      expect(mockHeroEngine.scrape).not.toHaveBeenCalled();
     });
   });
 

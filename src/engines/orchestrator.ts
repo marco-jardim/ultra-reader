@@ -29,6 +29,17 @@ import { httpEngine } from "./http/index.js";
 import { tlsClientEngine } from "./tlsclient/index.js";
 import { heroEngine } from "./hero/index.js";
 import type { Logger } from "../utils/logger.js";
+import { EngineAffinityCache } from "./engine-affinity.js";
+import { DomainCircuitBreaker } from "./circuit-breaker.js";
+
+function tryGetDomainFromUrl(url: string): string | null {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname ? hostname.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Orchestrator options
@@ -46,6 +57,13 @@ export interface OrchestratorOptions {
   logger?: Logger;
   /** Verbose logging */
   verbose?: boolean;
+
+  /** Optional per-domain engine ordering and stats cache */
+  affinityCache?: EngineAffinityCache;
+  /** Optional per-domain circuit breaker */
+  circuitBreaker?: DomainCircuitBreaker;
+  /** Inject time source (testing/metrics). Defaults to Date.now */
+  now?: () => number;
 }
 
 /**
@@ -82,15 +100,17 @@ export interface OrchestratorResult extends EngineResult {
  */
 export class EngineOrchestrator {
   private options: OrchestratorOptions;
-  private engines: Engine[];
   private engineOrder: EngineName[];
+  private availableEngineNames: EngineName[];
+  private readonly now: () => number;
 
   constructor(options: OrchestratorOptions = {}) {
     this.options = options;
+    this.now = options.now ?? (() => Date.now());
     this.engineOrder = this.resolveEngineOrder();
-    this.engines = this.engineOrder
-      .map((name) => ENGINE_REGISTRY[name])
-      .filter((engine) => engine.isAvailable());
+    this.availableEngineNames = this.engineOrder.filter((name) =>
+      ENGINE_REGISTRY[name].isAvailable()
+    );
   }
 
   /**
@@ -117,7 +137,7 @@ export class EngineOrchestrator {
    * Get available engines
    */
   getAvailableEngines(): EngineName[] {
-    return this.engines.map((e) => e.config.name);
+    return [...this.availableEngineNames];
   }
 
   /**
@@ -133,7 +153,17 @@ export class EngineOrchestrator {
     const logger = meta.logger || this.options.logger;
     const verbose = this.options.verbose || meta.options.verbose;
 
-    if (this.engines.length === 0) {
+    const domain = tryGetDomainFromUrl(meta.url);
+    const affinityCache = this.options.affinityCache;
+    const circuitBreaker = this.options.circuitBreaker;
+    const orderedEngineNames =
+      domain && affinityCache
+        ? affinityCache.getOrderedEngines(domain, this.availableEngineNames)
+        : [...this.availableEngineNames];
+
+    let blockedByCircuitBreaker: Error | null = null;
+
+    if (orderedEngineNames.length === 0) {
       throw new AllEnginesFailedError([], engineErrors);
     }
 
@@ -146,47 +176,70 @@ export class EngineOrchestrator {
     };
 
     log(
-      `[orchestrator] Starting scrape of ${meta.url} with engines: ${this.engineOrder.join(" → ")}`
+      `[orchestrator] Starting scrape of ${meta.url} with engines: ${orderedEngineNames.join(" → ")}`
     );
 
     // Try each engine in order
-    for (const engine of this.engines) {
-      const engineName = engine.config.name;
+    for (const engineName of orderedEngineNames) {
+      const engine = ENGINE_REGISTRY[engineName];
+
+      if (domain && circuitBreaker) {
+        const allowed = circuitBreaker.canRequest(domain);
+        if (!allowed) {
+          const remaining = circuitBreaker.getCooldownRemaining(domain);
+          blockedByCircuitBreaker = new Error(
+            `Domain circuit breaker is open for ${domain}${remaining > 0 ? ` (cooldown ${remaining}ms)` : ""}`
+          );
+          log(`[orchestrator] Circuit breaker open for ${domain}; short-circuiting cascade`);
+          break;
+        }
+      }
+
       attemptedEngines.push(engineName);
 
+      const startedAt = this.now();
+      log(`[orchestrator] Trying ${engineName} engine...`);
+
+      // Create abort controller for this engine's timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), engine.config.maxTimeout);
+
+      // Link external abort signal
+      if (meta.abortSignal) {
+        meta.abortSignal.addEventListener("abort", () => controller.abort(), { once: true });
+      }
+
       try {
-        log(`[orchestrator] Trying ${engineName} engine...`);
+        const result = await engine.scrape({
+          ...meta,
+          abortSignal: controller.signal,
+        });
 
-        // Create abort controller for this engine's timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), engine.config.maxTimeout);
-
-        // Link external abort signal
-        if (meta.abortSignal) {
-          meta.abortSignal.addEventListener("abort", () => controller.abort(), { once: true });
+        if (domain && affinityCache) {
+          affinityCache.recordResult(domain, engineName, true, result.duration);
+        }
+        if (domain && circuitBreaker) {
+          circuitBreaker.recordSuccess(domain);
         }
 
-        try {
-          const result = await engine.scrape({
-            ...meta,
-            abortSignal: controller.signal,
-          });
+        log(`[orchestrator] ✓ ${engineName} succeeded in ${result.duration}ms`);
 
-          clearTimeout(timeoutId);
-
-          log(`[orchestrator] ✓ ${engineName} succeeded in ${result.duration}ms`);
-
-          return {
-            ...result,
-            attemptedEngines,
-            engineErrors,
-          };
-        } finally {
-          clearTimeout(timeoutId);
-        }
+        return {
+          ...result,
+          attemptedEngines,
+          engineErrors,
+        };
       } catch (error: unknown) {
         const err = error instanceof Error ? error : new Error(String(error));
         engineErrors.set(engineName, err);
+
+        const elapsedMs = Math.max(0, this.now() - startedAt);
+        if (domain && affinityCache) {
+          affinityCache.recordResult(domain, engineName, false, elapsedMs);
+        }
+        if (domain && circuitBreaker) {
+          circuitBreaker.recordFailure(domain);
+        }
 
         // Log the error with appropriate detail
         if (error instanceof ChallengeDetectedError) {
@@ -211,12 +264,18 @@ export class EngineOrchestrator {
 
         // Continue to next engine
         log(`[orchestrator] Falling back to next engine...`);
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
 
     // All engines failed
     log(`[orchestrator] All engines failed for ${meta.url}`);
-    throw new AllEnginesFailedError(attemptedEngines, engineErrors);
+    const allFailed = new AllEnginesFailedError(attemptedEngines, engineErrors);
+    if (blockedByCircuitBreaker) {
+      allFailed.cause = blockedByCircuitBreaker;
+    }
+    throw allFailed;
   }
 
   /**

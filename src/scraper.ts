@@ -14,6 +14,8 @@ import {
   type ProxyMetadata,
 } from "./types";
 import { EngineOrchestrator, AllEnginesFailedError } from "./engines/index.js";
+import { EngineAffinityCache } from "./engines/engine-affinity.js";
+import { DomainCircuitBreaker } from "./engines/circuit-breaker.js";
 import { configureDefaultRotator } from "./utils/user-agents.js";
 import {
   discoverSite,
@@ -65,6 +67,16 @@ export class Scraper {
       forceEngine: this.options.forceEngine,
       logger: this.logger,
       verbose: this.options.verbose,
+
+      // Phase 1.5.11/1.5.12: keep per-domain learning and avoid burning attempts.
+      affinityCache: new EngineAffinityCache(),
+      circuitBreaker: new DomainCircuitBreaker({
+        // Be conservative: the orchestrator records failures per-engine attempt.
+        failureThreshold: 10,
+        cooldownMs: 2 * 60 * 1000,
+        halfOpenMaxAttempts: 1,
+        resetOnSuccess: true,
+      }),
     });
 
     // Pool is required for Hero engine (but may not be needed if using http/tlsclient only)
