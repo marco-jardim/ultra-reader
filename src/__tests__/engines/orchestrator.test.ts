@@ -166,6 +166,23 @@ describe("EngineOrchestrator", () => {
       expect(result.engineErrors.has("http")).toBe(true);
     });
 
+    it("prioritizes hero next when a WAF-tagged challenge is detected", async () => {
+      (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new ChallengeDetectedError("http", "waf:akamai:challenge")
+      );
+      (mockTlsClientEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(
+        successResult("tlsclient")
+      );
+      (mockHeroEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(successResult("hero"));
+
+      const orch = new EngineOrchestrator();
+      const result = await orch.scrape(defaultMeta());
+
+      expect(result.engine).toBe("hero");
+      expect(result.attemptedEngines).toEqual(["http", "hero"]);
+      expect(mockTlsClientEngine.scrape).not.toHaveBeenCalled();
+    });
+
     it("falls back through all three engines", async () => {
       (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
         new ChallengeDetectedError("http", "cloudflare")
