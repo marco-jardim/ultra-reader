@@ -13,6 +13,26 @@ describe("detectWaf", () => {
     expect(formatWafChallengeType(waf!)).toBe("cloudflare");
   });
 
+  it("returns null for Cloudflare infra-only on a normal 200 page", () => {
+    const waf = detectWaf({
+      statusCode: 200,
+      headers: { "cf-ray": "abc", server: "cloudflare" },
+      html: "<html><body>Hello world</body></html>",
+    });
+    expect(waf).toBeNull();
+  });
+
+  it("classifies Cloudflare rate limit when rate-limit markers present", () => {
+    const waf = detectWaf({
+      statusCode: 429,
+      headers: { "cf-ray": "abc", server: "cloudflare" },
+      html: "<html><body>Error 1015 You are being rate limited</body></html>",
+    });
+    expect(waf?.provider).toBe("cloudflare");
+    expect(waf?.category).toBe("rate_limit");
+    expect(formatWafChallengeType(waf!)).toBe("cloudflare-rate-limit");
+  });
+
   it("detects Akamai from cookies + html markers", () => {
     const waf = detectWaf({
       statusCode: 403,

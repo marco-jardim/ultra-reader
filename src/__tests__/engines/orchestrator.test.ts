@@ -183,6 +183,24 @@ describe("EngineOrchestrator", () => {
       expect(mockTlsClientEngine.scrape).not.toHaveBeenCalled();
     });
 
+    it("does not prioritize hero on WAF rate_limit (waf:akamai:rate_limit)", async () => {
+      (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new ChallengeDetectedError("http", "waf:akamai:rate_limit")
+      );
+      (mockTlsClientEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(
+        successResult("tlsclient")
+      );
+      (mockHeroEngine.scrape as ReturnType<typeof vi.fn>).mockResolvedValue(successResult("hero"));
+
+      const orch = new EngineOrchestrator();
+      const result = await orch.scrape(defaultMeta());
+
+      expect(result.engine).toBe("tlsclient");
+      expect(result.attemptedEngines).toEqual(["http", "tlsclient"]);
+      expect(mockTlsClientEngine.scrape).toHaveBeenCalled();
+      expect(mockHeroEngine.scrape).not.toHaveBeenCalled();
+    });
+
     it("falls back through all three engines", async () => {
       (mockHttpEngine.scrape as ReturnType<typeof vi.fn>).mockRejectedValue(
         new ChallengeDetectedError("http", "cloudflare")

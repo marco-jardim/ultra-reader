@@ -451,6 +451,48 @@ describe("TlsClientEngine", () => {
       await expect(tlsClientEngine.scrape(defaultMeta())).rejects.toThrow(ChallengeDetectedError);
     });
 
+    it("does NOT throw ChallengeDetectedError for normal HTML with Cloudflare-ish CDN headers", async () => {
+      mockGotScraping.mockResolvedValue(
+        mockGotResponse(VALID_HTML, {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cf-ray": "7d1e2f3a9b1c1234-SJC",
+            server: "cloudflare",
+          },
+        })
+      );
+
+      const result = await tlsClientEngine.scrape(defaultMeta());
+      expect(result.statusCode).toBe(200);
+      expect(result.html).toBe(VALID_HTML);
+    });
+
+    it("throws ChallengeDetectedError with waf:* type for Akamai Access Denied pages", async () => {
+      const akamaiBlockedHtml = `
+        <html><body>
+          <h1>Access Denied</h1>
+          <p>Reference #18.2f3a9b1c.1700000000.abcdef</p>
+        </body></html>
+      `;
+
+      mockGotScraping.mockResolvedValue(
+        mockGotResponse(akamaiBlockedHtml, {
+          statusCode: 403,
+          statusMessage: "Forbidden",
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            server: "AkamaiGHost",
+            "set-cookie": "ak_bmsc=abc123; path=/; HttpOnly",
+          },
+        })
+      );
+
+      const err = await tlsClientEngine.scrape(defaultMeta()).catch((e: Error) => e);
+      expect(err).toBeInstanceOf(ChallengeDetectedError);
+      if (!(err instanceof ChallengeDetectedError)) throw err;
+      expect(err.challengeType.startsWith("waf:")).toBe(true);
+    });
+
     it("does NOT throw for normal page content", async () => {
       mockGotScraping.mockResolvedValue(mockGotResponse(VALID_HTML));
 

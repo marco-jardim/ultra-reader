@@ -369,6 +369,21 @@ describe("HttpEngine", () => {
       await expect(httpEngine.scrape(defaultMeta())).rejects.toThrow(ChallengeDetectedError);
     });
 
+    it("does NOT throw ChallengeDetectedError for normal HTML with Cloudflare-ish CDN headers", async () => {
+      fetchSpy.mockResolvedValue(
+        mockFetchResponse(VALID_HTML, {
+          headers: {
+            "cf-ray": "7d1e2f3a9b1c1234-SJC",
+            server: "cloudflare",
+          },
+        })
+      );
+
+      const result = await httpEngine.scrape(defaultMeta());
+      expect(result.statusCode).toBe(200);
+      expect(result.html).toBe(VALID_HTML);
+    });
+
     it("ChallengeDetectedError includes challengeType", async () => {
       fetchSpy.mockResolvedValue(mockFetchResponse(cloudflareHtml));
 
@@ -401,6 +416,32 @@ describe("HttpEngine", () => {
       fetchSpy.mockResolvedValue(mockFetchResponse(ddosHtml));
 
       await expect(httpEngine.scrape(defaultMeta())).rejects.toThrow(ChallengeDetectedError);
+    });
+
+    it("throws ChallengeDetectedError with waf:* type for Akamai Access Denied pages", async () => {
+      const akamaiBlockedHtml = `
+        <html><body>
+          <h1>Access Denied</h1>
+          <p>You don't have permission to access this resource.</p>
+          <p>Reference #18.2f3a9b1c.1700000000.abcdef</p>
+        </body></html>
+      `;
+
+      fetchSpy.mockResolvedValue(
+        mockFetchResponse(akamaiBlockedHtml, {
+          status: 403,
+          statusText: "Forbidden",
+          headers: {
+            server: "AkamaiGHost",
+            "set-cookie": "ak_bmsc=abc123; path=/; HttpOnly",
+          },
+        })
+      );
+
+      const err = await httpEngine.scrape(defaultMeta()).catch((e: Error) => e);
+      expect(err).toBeInstanceOf(ChallengeDetectedError);
+      if (!(err instanceof ChallengeDetectedError)) throw err;
+      expect(err.challengeType.startsWith("waf:")).toBe(true);
     });
 
     it("does NOT throw for normal page content", async () => {
