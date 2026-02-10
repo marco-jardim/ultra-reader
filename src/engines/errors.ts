@@ -6,6 +6,7 @@
  */
 
 import type { EngineName } from "./types.js";
+import type { WafDetection } from "../waf/types.js";
 
 /**
  * Base error for all engine errors
@@ -37,11 +38,13 @@ export class EngineError extends Error {
  */
 export class ChallengeDetectedError extends EngineError {
   readonly challengeType: string;
+  readonly waf?: WafDetection;
 
-  constructor(engine: EngineName, challengeType?: string) {
+  constructor(engine: EngineName, challengeType?: string, waf?: WafDetection) {
     super(engine, `Challenge detected: ${challengeType || "unknown"}`, { retryable: true });
     this.name = "ChallengeDetectedError";
     this.challengeType = challengeType || "unknown";
+    this.waf = waf;
   }
 }
 

@@ -179,8 +179,9 @@ export class EngineOrchestrator {
       `[orchestrator] Starting scrape of ${meta.url} with engines: ${orderedEngineNames.join(" → ")}`
     );
 
-    // Try each engine in order
-    for (const engineName of orderedEngineNames) {
+    // Try each engine in order. The list may be re-ordered mid-cascade based on signals.
+    for (let index = 0; index < orderedEngineNames.length; index++) {
+      const engineName = orderedEngineNames[index];
       const engine = ENGINE_REGISTRY[engineName];
 
       if (domain && circuitBreaker) {
@@ -244,6 +245,34 @@ export class EngineOrchestrator {
         // Log the error with appropriate detail
         if (error instanceof ChallengeDetectedError) {
           log(`[orchestrator] ${engineName} detected challenge: ${error.challengeType}`);
+
+          if (verbose && error.waf?.signals?.length) {
+            log(
+              `[orchestrator] WAF signals (${error.waf.provider}:${error.waf.category}): ${error.waf.signals.join(", ")}`
+            );
+          }
+
+          // Policy: if a WAF/challenge is detected and Hero is available, prioritize Hero next.
+          const shouldPreferHero =
+            // Non-Cloudflare WAFs are very likely browser-gated.
+            (Boolean(error.waf) && error.waf?.provider !== "cloudflare") ||
+            // Explicit WAF tagging from detection.
+            error.challengeType.startsWith("waf:") ||
+            // Browser-required or interactive challenges.
+            error.challengeType.includes("cloudflare-js") ||
+            error.challengeType.includes("js-required") ||
+            error.challengeType.includes("turnstile") ||
+            error.challengeType.includes("captcha") ||
+            error.challengeType.includes("blocked");
+
+          if (shouldPreferHero && engineName !== "hero") {
+            const heroIndex = orderedEngineNames.indexOf("hero");
+            if (heroIndex !== -1 && heroIndex > index + 1) {
+              orderedEngineNames.splice(heroIndex, 1);
+              orderedEngineNames.splice(index + 1, 0, "hero");
+              log(`[orchestrator] Prioritizing hero engine next due to WAF/challenge signals`);
+            }
+          }
         } else if (error instanceof InsufficientContentError) {
           log(`[orchestrator] ${engineName} insufficient content: ${error.contentLength} chars`);
         } else if (error instanceof HttpError) {

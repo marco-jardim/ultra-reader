@@ -15,6 +15,7 @@ import {
   HttpError,
   EngineTimeoutError,
 } from "../errors.js";
+import { detectWaf, formatWafChallengeType } from "../../waf/index.js";
 import { ENGINE_CONFIGS } from "../types.js";
 import { getRandomUserAgent, generateReferer, UserAgentRotator } from "../../utils/user-agents.js";
 import { geoConsistentHeaders } from "../../utils/geo-locale.js";
@@ -166,12 +167,27 @@ export class HttpEngine implements Engine {
 
       // Check for HTTP errors BEFORE reading body (avoid OOM on large error responses)
       if (response.status >= 400) {
+        const headersRecord = this.headersToRecord(response.headers);
         // Read limited body for error context only
         const errorBody = await response.text();
+
+        const waf = detectWaf({
+          url,
+          statusCode: response.status,
+          headers: headersRecord,
+          html: errorBody,
+        });
+
         // Still check for challenges in error pages (some CF challenges return 403)
-        const challengeType = this.detectChallenge(errorBody);
+        let challengeType = this.detectChallenge(errorBody);
+        if (waf) {
+          const wafType = formatWafChallengeType(waf);
+          if (!challengeType || waf.provider !== "cloudflare") {
+            challengeType = wafType;
+          }
+        }
         if (challengeType) {
-          throw new ChallengeDetectedError("http", challengeType);
+          throw new ChallengeDetectedError("http", challengeType, waf ?? undefined);
         }
         throw new HttpError("http", response.status, response.statusText);
       }
@@ -183,10 +199,19 @@ export class HttpEngine implements Engine {
       );
 
       // Check for challenge pages
-      const challengeType = this.detectChallenge(html);
+      const headersRecord = this.headersToRecord(response.headers);
+      const waf = detectWaf({ url, statusCode: response.status, headers: headersRecord, html });
+
+      let challengeType = this.detectChallenge(html);
+      if (waf) {
+        const wafType = formatWafChallengeType(waf);
+        if (!challengeType || waf.provider !== "cloudflare") {
+          challengeType = wafType;
+        }
+      }
       if (challengeType) {
         logger?.debug(`[http] Challenge detected: ${challengeType}`);
-        throw new ChallengeDetectedError("http", challengeType);
+        throw new ChallengeDetectedError("http", challengeType, waf ?? undefined);
       }
 
       // Check for sufficient content

@@ -20,6 +20,7 @@ import {
 import { ENGINE_CONFIGS } from "../types.js";
 import { getRandomUserAgent, generateReferer, UserAgentRotator } from "../../utils/user-agents.js";
 import { geoConsistentHeaders } from "../../utils/geo-locale.js";
+import { detectWaf, formatWafChallengeType } from "../../waf/index.js";
 
 function resolveProxyUrl(proxy?: ProxyConfig): string | undefined {
   if (!proxy) return undefined;
@@ -163,27 +164,54 @@ export class TlsClientEngine implements Engine {
       const duration = Date.now() - startTime;
       const html = response.body;
 
+      const headersRecord: Record<string, string> = Object.fromEntries(
+        Object.entries(response.headers).map(([k, v]) => [
+          k,
+          Array.isArray(v) ? v.join(", ") : String(v ?? ""),
+        ])
+      );
+
+      const waf = detectWaf({
+        url,
+        statusCode: response.statusCode,
+        headers: headersRecord,
+        html,
+      });
+
       logger?.debug(
         `[tlsclient] Got response: ${response.statusCode} (${html.length} chars) in ${duration}ms`
       );
 
       // Check for HTTP errors
       if (response.statusCode >= 400) {
+        if (waf) {
+          throw new ChallengeDetectedError("tlsclient", formatWafChallengeType(waf), waf);
+        }
         throw new HttpError("tlsclient", response.statusCode, response.statusMessage);
       }
 
       // Check for JS-required challenges
-      const challengeType = this.detectJsRequired(html);
+      let challengeType = this.detectJsRequired(html);
+      if (waf) {
+        const wafType = formatWafChallengeType(waf);
+        if (!challengeType || (challengeType === "js-required" && waf.provider !== "cloudflare")) {
+          challengeType = wafType;
+        }
+      }
       if (challengeType) {
         logger?.debug(`[tlsclient] JS required: ${challengeType}`);
-        throw new ChallengeDetectedError("tlsclient", challengeType);
+        throw new ChallengeDetectedError("tlsclient", challengeType, waf ?? undefined);
       }
 
       // Check for blocked patterns
       const blockedReason = this.detectBlocked(html);
       if (blockedReason) {
         logger?.debug(`[tlsclient] Blocked: ${blockedReason}`);
-        throw new ChallengeDetectedError("tlsclient", `blocked: ${blockedReason}`);
+        throw new ChallengeDetectedError(
+          "tlsclient",
+          `blocked: ${blockedReason}`,
+          waf ?? undefined
+        );
       }
 
       // Check for sufficient content
@@ -198,12 +226,7 @@ export class TlsClientEngine implements Engine {
         url: response.url,
         statusCode: response.statusCode,
         contentType: response.headers["content-type"] as string | undefined,
-        headers: Object.fromEntries(
-          Object.entries(response.headers).map(([k, v]) => [
-            k,
-            Array.isArray(v) ? v.join(", ") : String(v ?? ""),
-          ])
-        ),
+        headers: headersRecord,
         engine: "tlsclient",
         duration,
       };
