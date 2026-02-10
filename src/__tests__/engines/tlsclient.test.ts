@@ -201,6 +201,41 @@ describe("TlsClientEngine", () => {
       const callArgs = mockGotScraping.mock.calls[0][0];
       expect(callArgs.headers["X-Custom"]).toBe("value123");
     });
+
+    it("applies geoConsistentHeaders using proxy.url", async () => {
+      const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+      mockGotScraping.mockResolvedValue(mockGotResponse(VALID_HTML));
+
+      await tlsClientEngine.scrape(
+        defaultMeta({
+          options: {
+            urls: [],
+            proxy: { url: "http://user:pass_country-de@proxy.example:8080" },
+          },
+        })
+      );
+
+      const callArgs = mockGotScraping.mock.calls[0][0];
+      expect(callArgs.headers["Accept-Language"]).toContain("de-DE");
+      randomSpy.mockRestore();
+    });
+
+    it("caller Accept-Language overrides geo defaults", async () => {
+      mockGotScraping.mockResolvedValue(mockGotResponse(VALID_HTML));
+
+      await tlsClientEngine.scrape(
+        defaultMeta({
+          options: {
+            urls: [],
+            proxy: { url: "http://user:pass_country-de@proxy.example:8080" },
+            headers: { "Accept-Language": "fr-FR" },
+          },
+        })
+      );
+
+      const callArgs = mockGotScraping.mock.calls[0][0];
+      expect(callArgs.headers["Accept-Language"]).toBe("fr-FR");
+    });
   });
 
   // -----------------------------------------------------------------------

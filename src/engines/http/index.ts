@@ -7,6 +7,7 @@
  */
 
 import type { Engine, EngineConfig, EngineMeta, EngineResult } from "../types.js";
+import type { ProxyConfig } from "../../types.js";
 import {
   EngineError,
   ChallengeDetectedError,
@@ -16,6 +17,21 @@ import {
 } from "../errors.js";
 import { ENGINE_CONFIGS } from "../types.js";
 import { getRandomUserAgent, generateReferer, UserAgentRotator } from "../../utils/user-agents.js";
+import { geoConsistentHeaders } from "../../utils/geo-locale.js";
+
+function resolveProxyUrl(proxy?: ProxyConfig): string | undefined {
+  if (!proxy) return undefined;
+  if (proxy.url) return proxy.url;
+
+  if (proxy.host && proxy.port) {
+    const auth = proxy.username
+      ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password ?? "")}@`
+      : "";
+    return `http://${auth}${proxy.host}:${proxy.port}`;
+  }
+
+  return undefined;
+}
 
 /**
  * Browser-like headers for fetch requests
@@ -109,8 +125,11 @@ export class HttpEngine implements Engine {
         options.headers?.["Referer"] ??
         (options.spoofReferer !== false ? generateReferer(url) : undefined);
 
+      const proxyUrl = resolveProxyUrl(options.proxy);
+
       const mergedHeaders: Record<string, string> = {
         ...DEFAULT_HEADERS,
+        ...geoConsistentHeaders(proxyUrl),
         "User-Agent": resolvedUa,
         ...clientHints,
         ...(referer ? { Referer: referer } : {}),

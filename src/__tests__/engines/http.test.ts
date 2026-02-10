@@ -188,6 +188,46 @@ describe("HttpEngine", () => {
       expect(callHeaders["Sec-CH-UA"]).toBeDefined();
       expect(callHeaders["Sec-CH-UA-Mobile"]).toBeDefined();
     });
+
+    it("applies geoConsistentHeaders using proxy host/port", async () => {
+      const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+      fetchSpy.mockResolvedValue(mockFetchResponse(VALID_HTML));
+
+      await httpEngine.scrape(
+        defaultMeta({
+          options: {
+            urls: [],
+            proxy: {
+              host: "proxy.example",
+              port: 8080,
+              username: "user_country-de",
+              password: "pass",
+            },
+          },
+        })
+      );
+
+      const callHeaders = fetchSpy.mock.calls[0][1].headers;
+      expect(callHeaders["Accept-Language"]).toContain("de-DE");
+      randomSpy.mockRestore();
+    });
+
+    it("caller Accept-Language overrides geo defaults", async () => {
+      fetchSpy.mockResolvedValue(mockFetchResponse(VALID_HTML));
+
+      await httpEngine.scrape(
+        defaultMeta({
+          options: {
+            urls: [],
+            proxy: { url: "http://user:pass_country-de@proxy.example:8080" },
+            headers: { "Accept-Language": "fr-FR" },
+          },
+        })
+      );
+
+      const callHeaders = fetchSpy.mock.calls[0][1].headers;
+      expect(callHeaders["Accept-Language"]).toBe("fr-FR");
+    });
   });
 
   // -----------------------------------------------------------------------
